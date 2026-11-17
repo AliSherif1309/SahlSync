@@ -1,0 +1,37 @@
+name: OneDrive local test APK
+on:
+ pull_request:
+ workflow_dispatch:
+permissions:
+ contents: read
+jobs:
+ local-test:
+  runs-on: ubuntu-latest
+  steps:
+   - uses: actions/checkout@v4
+   - uses: actions/setup-java@v4
+     with:
+      distribution: temurin
+      java-version: '17'
+   - uses: android-actions/setup-android@v3
+     with:
+      packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+   - uses: gradle/actions/setup-gradle@v4
+     with:
+      gradle-version: '9.5.0'
+   - name: Test configured Microsoft build and create unsigned APK
+     run: >-
+      gradle testDebugUnitTest lintDebug assembleRelease --no-daemon
+      -PmsalClientId=71615e44-4238-43e9-a53e-441e699a2ed3
+      -PmsalSignature=D7dAFIHlMCL0tzHTRGVYfaUmmic=
+   - name: Verify the registered Android callback
+     run: |
+      "$ANDROID_HOME/build-tools/36.0.0/aapt" dump xmltree app/build/outputs/apk/release/app-release-unsigned.apk AndroidManifest.xml > manifest.txt
+      grep -F 'com.aly.sahlsync' manifest.txt
+      grep -F '/D7dAFIHlMCL0tzHTRGVYfaUmmic=' manifest.txt
+   - uses: actions/upload-artifact@v4
+     with:
+      name: SahlSync-OneDrive-unsigned-local-test
+      path: |
+       app/build/outputs/apk/release/app-release-unsigned.apk
+       tools/Sign-LocalTestApk.ps1

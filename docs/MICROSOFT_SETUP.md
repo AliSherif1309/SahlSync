@@ -1,4 +1,4 @@
-# Microsoft setup — required before live testing
+# Microsoft setup - required before live testing
 
 An app-specific Microsoft Entra registration is required. Do not use OneSync's
 client id, another app's registration or any client secret in this Android app.
@@ -31,3 +31,17 @@ References:
 - https://learn.microsoft.com/en-us/entra/msal/android/msal-configuration
 - https://learn.microsoft.com/en-us/graph/api/driveitem-put-content
 - https://learn.microsoft.com/en-us/graph/api/resources/driveitem
+
+## Registered local test build
+
+The `OneDrive local test APK` workflow creates an unsigned APK using the Sahl Sync
+Microsoft registration and the registered local development certificate hash.
+These are public application identifiers, not credentials. The artifact cannot
+be installed until signed locally with the matching development key. The key
+stays on the developer laptop and is never sent to GitHub.
+
+Set JAVA_HOME to your JDK, then run `tools/Sign-LocalTestApk.ps1` with the downloaded
+unsigned APK and a new output APK path. The script checks the local certificate
+against the registered hash, signs the APK, verifies its signature and prints its
+SHA-256 checksum. Never install an APK with a mismatched Microsoft callback hash.
+Production signing and a production redirect registration are separate work.
