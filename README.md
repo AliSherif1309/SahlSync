@@ -2,9 +2,8 @@
 
 OneDrive folder backup for Android, part of the Sahl app suite.
 
-**0.1.0-alpha1 — engineering preview. Not ready to replace OneSync.** Microsoft
-application registration is required before account connection can work. Live
-Microsoft sign-in and OneDrive uploads have not yet been tested with an account.
+**0.1.0-alpha2 — engineering preview. Not ready to replace OneSync.** A local test registration has verified Microsoft sign-in and one real upload.
+Repeat-upload verification is being corrected; this remains a development build.
 
 ## Implemented first slice
 
@@ -16,8 +15,9 @@ Microsoft sign-in and OneDrive uploads have not yet been tested with an account.
 - One exclusion glob per line (`*.tmp`, `private/*`), relative to the selected folder.
 - Separate content-addressed versions: `report--<sha256>.pdf`. Original filenames
   are retained as prefixes; no files are deleted. Existing cloud names use
-  conflict-fail behavior. Known versions are skipped only when their saved ETag
-  and size still match. Unexpected existing versions are reported as conflicts.
+  conflict-fail behavior. Known versions skip downloads when their saved ETag
+  and size match. If a tag changes or a receipt is missing, verify remote SHA-256
+  content before calling the file unchanged. Different bytes remain conflicts.
 - Bounded run history, pause/resume scheduling, Microsoft sign-out.
 - Shared Sahl colors, gradient, rounded panels and gold controls.
 
