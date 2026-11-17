@@ -25,8 +25,9 @@ if ($signature -cne $ExpectedSignature) { throw 'This certificate does not match
 if ($LASTEXITCODE -ne 0) { throw 'APK signing failed' }
 $verification = & $java -jar $signer verify --verbose --print-certs $outputPath
 if ($LASTEXITCODE -ne 0) { throw 'APK signature verification failed' }
-$expectedHex = [Convert]::ToHexString([Convert]::FromBase64String($ExpectedSignature)).ToLowerInvariant()
+$expectedHex = [BitConverter]::ToString([Convert]::FromBase64String($ExpectedSignature)).Replace('-','').ToLowerInvariant()
 if (-not (($verification -join "`n") -match ('certificate SHA-1 digest: ' + [regex]::Escape($expectedHex)))) { throw 'Final APK certificate mismatch' }
 $verification | Write-Output
 Get-FileHash -LiteralPath $outputPath -Algorithm SHA256
 Write-Output 'Local development APK verified. This is not a production signing key.'
+
