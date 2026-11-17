@@ -8,9 +8,9 @@ import java.util.*;
 public final class BackupRules {
  public static final long MAX_FILE_BYTES=20L*1024*1024;
  public static void validateName(String name){
-  if(name==null || name.isBlank() || name.equals(".") || name.equals("..") ||
-    name.length()>200 || name.matches(".*[\\x00-\\x1f\\\\/:*?\"<>|].*") ||
-    name.endsWith(".") || name.endsWith(" ")) throw new IllegalArgumentException("Unsupported file name");
+  if(name==null || name.trim().isEmpty() || name.equals(".") || name.equals("..") ||
+    name.length()>180 || name.endsWith(".") || name.endsWith(" ")) throw new IllegalArgumentException("Unsupported file name");
+  for(char ch:name.toCharArray())if(ch<32 || "\\/:*?\"<>|".indexOf(ch)>=0)throw new IllegalArgumentException("Unsupported file name");
  }
  public static String hash(InputStream input, OutputStream copy) throws Exception {
   MessageDigest digest=MessageDigest.getInstance("SHA-256"); byte[] b=new byte[65536]; int n; long size=0;
@@ -25,8 +25,13 @@ public final class BackupRules {
  public static boolean excluded(String relative,String patterns){
   for(String line:patterns.split("\\n")){
    String pattern=line.trim(); if(pattern.isEmpty())continue;
-   String regex="\\Q"+pattern.replace("*","\\E.*\\Q").replace("?","\\E.\\Q")+"\\E";
-   if(relative.matches(regex))return true;
+   StringBuilder regex=new StringBuilder();
+   for(char ch:pattern.toCharArray()){
+    if(ch=='*')regex.append(".*");
+    else if(ch=='?')regex.append('.');
+    else regex.append(java.util.regex.Pattern.quote(String.valueOf(ch)));
+   }
+   if(relative.matches(regex.toString()))return true;
   } return false;
  }
 }
