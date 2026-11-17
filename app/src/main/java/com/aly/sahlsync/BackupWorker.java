@@ -56,39 +56,33 @@ public final class BackupWorker extends Worker {
     if(isStopped()||Thread.currentThread().isInterrupted())throw new InterruptedException();
     if(++visited>5000)throw new IOException("Alpha limit: 5000 items per run");
     String name=cursor.getString(1),relative=path+name;
-    if(BackupRules.excluded(relative,pair.optString("exclude"))){excluded++;continue;}
+    if(relative.equals(OneDriveBackup.HISTORY)||relative.startsWith(OneDriveBackup.HISTORY+"/")||BackupRules.excluded(relative,pair.optString("exclude"))){excluded++;continue;}
     BackupRules.validateName(name);
     Uri uri=android.provider.DocumentsContract.buildDocumentUriUsingTree(source,cursor.getString(0));
     if(android.provider.DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(2))){
      walk(c,graph,uri,graph.folder(remote,name),relative+"/",pair,depth+1);
-    }else upload(c,graph,uri,remote,name,pair);
+    }else upload(c,graph,uri,remote,name,relative,pair);
    }
   }
  }
- private void upload(Context c,Graph graph,Uri uri,String parent,String name,JSONObject pair)throws Exception{
+ private void upload(Context c,Graph graph,Uri uri,String parent,String name,String relative,JSONObject pair)throws Exception{
   File stage=File.createTempFile("backup-",".tmp",c.getCacheDir());
   try{
-   String hash;
-   try(InputStream in=c.getContentResolver().openInputStream(uri);OutputStream out=new FileOutputStream(stage)){
+   String hash;try(InputStream in=c.getContentResolver().openInputStream(uri);OutputStream out=new FileOutputStream(stage)){
     if(in==null)throw new IOException("Cannot open file");hash=BackupRules.hash(in,out);
    }
-   String version=BackupRules.versionName(name,hash);
-   String key="done:"+pair.getString("account")+":"+parent+":"+version;
-   try{
-    JSONObject existing=graph.item(parent,version);
-    String known=Store.prefs(c).getString(key,"");
-    if(RemoteFileVerifier.unchanged(stage.length(),hash,existing.optLong("size",-1),known,existing.optString("eTag"),()->graph.contentHash(existing.getString("id")))){
-     if(!Store.prefs(c).edit().putString(key,existing.optString("eTag")).commit())throw new IOException("Cannot record verified upload");
-     unchanged++;
-    }
-    else conflicts++;
-    return;
-   }catch(Graph.HttpError e){if(e.status!=404)throw e;}
-   JSONObject result;
-   try{result=graph.upload(parent,version,stage);}catch(Graph.HttpError e){if(e.status!=409&&e.status!=412)throw e;conflicts++;return;}
-   String tag=result.getString("eTag");
-   if(!Store.prefs(c).edit().putString(key,tag).commit())throw new IOException("Cannot record completed upload");
-   uploaded++;
+   if(isStopped())throw new InterruptedException();
+   JSONObject saved=Store.receipt(c,pair.getString("id"),relative);
+   VersionedBackup.Receipt known=saved==null?null:new VersionedBackup.Receipt(saved.getString("id"),saved.optString("tag"),saved.getString("hash"),saved.getLong("size"));
+   VersionedBackup.Result result;
+   try{result=VersionedBackup.backup(new OneDriveBackup(c,graph,pair,parent,relative,name),name,stage,hash,known);}
+   catch(Graph.HttpError e){if(e.status!=409&&e.status!=412)throw e;conflicts++;return;}
+   switch(result.outcome){
+    case CREATED: case UPDATED: uploaded++;break;
+    case UNCHANGED: unchanged++;break;
+    case CONFLICT: conflicts++;return;
+   }
+   Store.receipt(c,pair.getString("id"),relative,name,result.receipt);
    setProgressAsync(new Data.Builder().putInt("uploaded",uploaded).build());
   }finally{stage.delete();}
  }
