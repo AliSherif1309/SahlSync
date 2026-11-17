@@ -32,6 +32,7 @@ final class Graph {
    }
   }finally{c.disconnect();}
  }
+ String contentHash(String itemId)throws Exception{return RemoteContent.sha256(ROOT+"/me/drive/items/"+Uri.encode(itemId)+"/content",token);}
  JSONObject item(String parent,String name) throws Exception {return json("GET","/me/drive/items/"+Uri.encode(parent)+":/"+Uri.encode(name),null);}
  String folder(String parent,String name) throws Exception {
   BackupRules.validateName(name);

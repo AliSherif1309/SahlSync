@@ -77,7 +77,10 @@ public final class BackupWorker extends Worker {
    try{
     JSONObject existing=graph.item(parent,version);
     String known=Store.prefs(c).getString(key,"");
-    if(!known.isEmpty()&&known.equals(existing.optString("eTag"))&&existing.optLong("size",-1)==stage.length())unchanged++;
+    if(RemoteFileVerifier.unchanged(stage.length(),hash,existing.optLong("size",-1),known,existing.optString("eTag"),()->graph.contentHash(existing.getString("id")))){
+     if(!Store.prefs(c).edit().putString(key,existing.optString("eTag")).commit())throw new IOException("Cannot record verified upload");
+     unchanged++;
+    }
     else conflicts++;
     return;
    }catch(Graph.HttpError e){if(e.status!=404)throw e;}

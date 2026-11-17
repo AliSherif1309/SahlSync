@@ -20,17 +20,18 @@ public final class MainActivity extends Activity {
  private IAccount account;
  private LinearLayout content;
  private TextView status,history;
+ private Button connectButton,disconnectButton;
  private String pendingLocal;
  @Override public void onCreate(Bundle saved){
   super.onCreate(saved);if(saved!=null)pendingLocal=saved.getString("local");
   draw();
-  if(Auth.configured())io.execute(()->{try{ISingleAccountPublicClientApplication app=Auth.open(getApplicationContext());runOnUiThread(()->{auth=app;loadAccount();});}catch(Exception e){runOnUiThread(()->status.setText("Could not initialize Microsoft sign-in."));}});
+  if(Auth.configured())io.execute(()->{try{ISingleAccountPublicClientApplication app=Auth.open(getApplicationContext());runOnUiThread(()->{auth=app;loadAccount();});}catch(Exception e){runOnUiThread(()->{status.setText("Could not initialize Microsoft sign-in. Reopen the app to retry.");});}});
  }
  @Override protected void onResume(){super.onResume();if(auth!=null)loadAccount();}
  private void loadAccount(){auth.getCurrentAccountAsync(new ISingleAccountPublicClientApplication.CurrentAccountCallback(){
-  public void onAccountLoaded(IAccount a){account=a;status.setText(a==null?"Not connected to OneDrive":"Connected: "+a.getUsername());}
-  public void onAccountChanged(IAccount prior,IAccount current){account=current;}
-  public void onError(MsalException e){status.setText("Sign-in needs attention. Connect again.");}
+  public void onAccountLoaded(IAccount a){account=a;status.setText(a==null?"Not connected to OneDrive":"Connected: "+a.getUsername());updateAccountButtons();}
+  public void onAccountChanged(IAccount prior,IAccount current){account=current;updateAccountButtons();}
+  public void onError(MsalException e){status.setText("Sign-in needs attention. Connect again.");account=null;updateAccountButtons();}
  });}
  private LinearLayout card(String title){
   LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);int p=SahlTheme.dp(this,18);card.setPadding(p,p,p,p);card.setBackground(SahlTheme.rounded(this,SahlTheme.PANEL));
@@ -72,6 +73,11 @@ public final class MainActivity extends Activity {
  private void refreshHistory(){
   try{JSONArray all=new JSONArray(Store.prefs(this).getString("history","[]"));StringBuilder text=new StringBuilder();for(int i=0;i<all.length();i++){JSONObject row=all.getJSONObject(i);text.append(java.text.DateFormat.getDateTimeInstance().format(new Date(row.getLong("time")))).append('\n').append(row.getString("message")).append("\n\n");}history.setText(text.length()==0?"No backup runs yet.":text);}
   catch(Exception e){history.setText("History is unavailable.");}
+ }
+ private void updateAccountButtons(){
+  if(connectButton==null)return;
+  connectButton.setEnabled(auth!=null&&account==null);connectButton.setText(!Auth.configured()?"OneDrive setup required":auth==null?"Preparing OneDrive…":account==null?"Connect OneDrive":"Connected");
+  disconnectButton.setEnabled(auth!=null&&account!=null);
  }
  private void connect(){
   if(!Auth.configured()){message("This early build needs its Microsoft app registration configured before sign-in can work. No Microsoft password is collected by Sahl Sync.");return;}
