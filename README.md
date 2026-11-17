@@ -1,57 +1,62 @@
 # Sahl Sync
 
-OneDrive folder backup for Android, part of the Sahl app suite.
+Android folder backup with app-managed version history. Part of the Sahl suite.
 
-**0.1.0-alpha2 — engineering preview. Not ready to replace OneSync.** A local test registration has verified Microsoft sign-in and one real upload.
-Repeat-upload verification is being corrected; this remains a development build.
+**0.2.0-alpha1 - development preview. Keep OneSync until real-device validation is complete.**
 
-## Implemented first slice
+## File behavior
 
-- Microsoft MSAL single-account sign-in integration (configuration gated).
-- Android folder picker with persistent read-only access.
-- OneDrive folder browser and multiple folder backups, bound to the selected account.
-- Manual or approximate daily upload-only backup through WorkManager.
-- Unmetered-network, charging and battery-not-low constraints.
-- One exclusion glob per line (`*.tmp`, `private/*`), relative to the selected folder.
-- Separate content-addressed versions: `report--<sha256>.pdf`. Original filenames
-  are retained as prefixes; no files are deleted. Existing cloud names use
-  conflict-fail behavior. Known versions skip downloads when their saved ETag
-  and size match. If a tag changes or a receipt is missing, verify remote SHA-256
-  content before calling the file unchanged. Different bytes remain conflicts.
-- Bounded run history, pause/resume scheduling, Microsoft sign-out.
-- Shared Sahl colors, gradient, rounded panels and gold controls.
+- Each source file uses its original name in the backup folder: `report.txt`.
+- Changed content updates the same cloud item rather than creating hash-named working files.
+- Before an update, Sahl Sync downloads and verifies the previous cloud contents,
+  stores a separate snapshot, verifies that snapshot, then conditionally updates
+  the current item. Failed archiving prevents replacement.
+- Unchanged files do not create more snapshots. An independently changed cloud
+  file is reported as a conflict. Conditional writes protect against changes
+  between checking and updating.
+- History is made of Sahl-managed files under `.sahl-sync-history/<pair>/<file>/`,
+  with `origin.json` metadata. It does not call OneDrive's native version-history API.
+- **Version history** on each backup lets you choose a file, browse older copies,
+  and save a verified copy to your phone with Android's document picker. This
+  first history UI saves a copy; it does not overwrite the phone's current file.
+- Snapshots have no automatic expiry or cleanup in this preview. They consume
+  OneDrive quota and remain dependent on that storage existing and being accessible.
+- Previous hash-named alpha test copies are left untouched. Their contents are
+  not automatically migrated or deleted. New original-name receipts start with
+  the next backup; the following edit creates the first app-managed snapshot.
 
-Limits: 20 MiB per file, 5,000 visited items and 32 nested folders per run. File
-bytes are staged in private cache for consistent hashing/upload, then removed.
-WorkManager can stop a run or delay it under Android battery restrictions. This
-alpha has no foreground long-running transfer mode, persistent upload-session
-resume, per-file conflict UI, retention cleanup or notification progress. Large
-folders may need repeated runs. Completed versions remain in OneDrive.
+The `VersionedBackup.Backend` contract is provider-independent so the same
+archive-before-update behavior can be used for future local/device sync backends.
+Only the OneDrive adapter exists today; this is not yet a Syncthing replacement.
 
-## Setup and build
+## Current features and limits
 
-See [Microsoft setup](docs/MICROSOFT_SETUP.md). JDK 17, Android SDK 36 and Gradle
-9.5.0 are required. CI runs unit tests, lint and a debug APK build. Download its
-artifact from Actions for engineering inspection, not production installation.
+Microsoft MSAL sign-in, persistent read-only local folder access, OneDrive folder
+browser, manual or approximate daily uploads, unmetered/charging/battery rules,
+exclusion globs, backup history, and the shared green/gold Sahl theme.
+
+20 MiB per file; 5,000 visited items and 32 nested folders per run. The reserved
+`.sahl-sync-history` folder is excluded from source traversal. No deletion sync,
+large/resumable transfers, two-way sync, in-place restore, retention settings or
+Arabic UI yet. WorkManager may interrupt long runs; completed uploads and
+snapshots remain. History browsing currently uses the saved pair/file index;
+metadata and snapshots remain in cloud storage if local settings are lost, but
+an automatic history-import UI is not implemented yet.
+
+## Build and testing
+
+JDK 17, Android SDK 36, Gradle 9.5.0. CI runs unit tests, lint and APK compilation.
+See [Microsoft setup](docs/MICROSOFT_SETUP.md) for the registered local test build.
+App id: `com.aly.sahlsync`.
 
 ```sh
 gradle testDebugUnitTest lintDebug assembleDebug
 ```
 
-App id: `com.aly.sahlsync`. There is no backend, analytics service or client secret.
-MSAL owns token storage; credentials are never written into sync preferences or
-history. Android backup is disabled for device-local account and folder state.
+Real-device testing of earlier previews verified sign-in, first upload, unchanged
+skips and separate edited versions. This preview needs a clean-name update,
+archive browsing, saved-copy verification and cloud-edit conflict test on-device.
 
-## Roadmap
-
-1. Configure Microsoft registration and test consent, refresh, sign-out and
-   account switching on a real device using a disposable test folder.
-2. Add instrumented UI/provider tests, mock Graph tests and network interruption,
-   throttling, conflict and storage-failure tests before production release.
-3. Add large-file upload sessions, resumable jobs, per-file progress, richer
-   conflict handling and restore/version browsing.
-4. Add download-only and two-way sync after recovery tests pass.
-5. Arabic UI with licensed bundled Thmanyah typography; keep fonts consistent
-   with the other Sahl apps. English currently uses the system sans font.
-
-[Shared Sahl design rules](docs/DESIGN.md) apply to every subsequent screen.
+MSAL owns credentials; no passwords/tokens are logged. No analytics backend.
+Device-local account/folder state is excluded from Android cloud backup.
+[Shared design rules](docs/DESIGN.md) apply to future screens.

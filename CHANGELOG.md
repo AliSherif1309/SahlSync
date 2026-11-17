@@ -1,5 +1,15 @@
 # Changes
 
+## 0.2.0-alpha1
+
+- Keep a single current file under its original name.
+- Store verified app-managed snapshots before conditional updates.
+- Add Version history browsing and verified save-as-copy to the phone.
+- Share backup/version policy through a provider-independent backend contract.
+- Preserve externally changed cloud files as conflicts and leave old alpha copies untouched.
+- Wire account-state controls so Connect waits for initialization and reflects Connected.
+
+
 ## 0.1.0-alpha2
 
 - Verify remote bytes before reporting a conflict when OneDrive metadata tags change.
