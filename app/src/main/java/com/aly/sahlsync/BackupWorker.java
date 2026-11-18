@@ -25,7 +25,7 @@ public final class BackupWorker extends Worker {
  public BackupWorker(@NonNull Context c,@NonNull WorkerParameters p){super(c,p);}
  static Constraints constraints(JSONObject pair){return new Constraints.Builder().setRequiredNetworkType(pair.optBoolean("unmetered",true)?NetworkType.UNMETERED:NetworkType.CONNECTED).setRequiresCharging(pair.optBoolean("charging",false)).setRequiresBatteryNotLow(true).build();}
  static void enqueue(Context c,JSONObject pair,boolean periodic){
-  String id=pair.optString("id");Data data=new Data.Builder().putString("pair",id).build();
+  String id=pair.optString("id");Data data=new Data.Builder().putString("pair",id).putBoolean("legacyDaily",periodic).build();
   WorkManager wm=WorkManager.getInstance(c);
   if(periodic)wm.enqueueUniquePeriodicWork("scheduled-"+id,ExistingPeriodicWorkPolicy.UPDATE,new PeriodicWorkRequest.Builder(BackupWorker.class,24,TimeUnit.HOURS).setInputData(data).setConstraints(constraints(pair)).build());
   else wm.enqueueUniqueWork("manual-"+id,ExistingWorkPolicy.KEEP,new OneTimeWorkRequest.Builder(BackupWorker.class).setInputData(data).setConstraints(constraints(pair)).build());
@@ -37,7 +37,22 @@ public final class BackupWorker extends Worker {
    BackupCancellation.bind(this::isStopped);
    try{
     BackupCancellation.check();progress();
-    JSONObject pair=Store.pair(c,getInputData().getString("pair"));
+    JSONObject pair;
+    synchronized(BackupSchedule.class){
+     pair=Store.pair(c,getInputData().getString("pair"));
+     String generation=getInputData().getString("scheduleGeneration");
+     if(generation!=null){
+      if(!generation.equals(pair.optString("scheduleGeneration")))return Result.success();
+      int days=pair.optInt("scheduleDays");
+      if(days!=0){
+       long after=Math.max(System.currentTimeMillis(),getInputData().getLong("scheduleDue",0));
+       long next=BackupSchedule.next(java.time.Instant.ofEpochMilli(after),java.time.ZoneId.systemDefault(),
+        pair.getInt("scheduleHour"),pair.getInt("scheduleMinute"),days);
+       BackupSchedule.enqueue(c,pair,next).getResult().get();
+      }
+      if(getRunAttemptCount()==0)Store.history(c,pair.optString("id"),"Scheduled backup started.");
+     }else if(getInputData().getBoolean("legacyDaily",false)&&!pair.optBoolean("daily"))return Result.success();
+    }
     IAuthenticationResult auth=Auth.token(Auth.open(c));
     if(!auth.getAccount().getId().equals(pair.getString("account")))throw new IOException("Account changed; recreate this folder pair");
     DocumentFile local=DocumentFile.fromTreeUri(c,Uri.parse(pair.getString("local")));
@@ -46,7 +61,7 @@ public final class BackupWorker extends Worker {
     graph.enableResumableUploads(c,getInputData().getString("pair"),this::progress);
     walk(c,graph,local.getUri(),pair.getString("remote"),"",pair,0);
     BackupCancellation.check();
-    Store.history(c,getInputData().getString("pair"),"Backup finished: "+uploaded+" uploaded, "+unchanged+" unchanged, "+excluded+" excluded, "+conflicts+" conflicts.");
+    Store.history(c,getInputData().getString("pair"),(getInputData().getString("scheduleGeneration")!=null?"Scheduled backup finished: ":"Backup finished: ")+uploaded+" uploaded, "+unchanged+" unchanged, "+excluded+" excluded, "+conflicts+" conflicts.");
     return conflicts==0?Result.success(new Data.Builder().putString("summary","Completed: "+uploaded+" uploaded, "+unchanged+" unchanged").build()):Result.failure(new Data.Builder().putString("summary",conflicts+" conflicts - see History").build());
    }catch(Graph.HttpError e){
     if(isStopped())return Result.failure();

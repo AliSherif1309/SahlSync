@@ -104,13 +104,14 @@ public final class MainActivity extends Activity {
      heading.setText(title+" / "+(expanded?"Hide controls":"Show controls"));
     });
     entry.addView(heading);
-    entry.addView(SahlTheme.label(this,"Phone to "+pair.getString("remoteName")+"\n"+(pair.optBoolean("unmetered")?"Unmetered network":"Any network")+(pair.optBoolean("charging")?" / Charging":"")+(pair.optBoolean("daily")?" / Daily":" / Manual"),14,SahlTheme.MUTED));
+    entry.addView(SahlTheme.label(this,"Phone to "+pair.getString("remoteName")+"\n"+(pair.optBoolean("unmetered")?"Unmetered network":"Any network")+(pair.optBoolean("charging")?" / Charging":"")+(pair.optBoolean("daily")||pair.optInt("scheduleMode")!=0?" / Scheduled":" / Manual"),14,SahlTheme.MUTED));
     TextView manual=SahlTheme.label(this,"",14,SahlTheme.MUTED),scheduled=SahlTheme.label(this,"",14,SahlTheme.MUTED);
     entry.addView(manual);entry.addView(scheduled);entry.addView(actions);
     Button backup=SahlTheme.button(this,"Back up now / Retry",()->BackupWorker.enqueue(this,pair,false));actions.addView(backup);
     Button cancel=SahlTheme.button(this,"Cancel current backup",()->cancelBackup(pair));actions.addView(cancel);
-    watchWork("manual-"+pair.optString("id"),manual,false);
-    watchWork("scheduled-"+pair.optString("id"),scheduled,true);
+    watchWork("manual-"+pair.optString("id"),manual,false,false);
+    String generation=pair.optString("scheduleGeneration");
+    watchWork(generation.isEmpty()?"scheduled-"+id:generation,scheduled,true,!generation.isEmpty());
     actions.addView(SahlTheme.button(this,"Edit backup settings",()->editPair(pair)));
     actions.addView(SahlTheme.button(this,"Backup activity",()->showFolderHistory(pair)));
     actions.addView(SahlTheme.button(this,"Version history",()->showVersionFiles(pair)));
@@ -149,14 +150,19 @@ public final class MainActivity extends Activity {
   }));
   log.addView(history);
  }
- private void watchWork(String name,TextView label,boolean periodic){
-  androidx.lifecycle.LiveData<List<WorkInfo>> live=WorkManager.getInstance(this).getWorkInfosForUniqueWorkLiveData(name);
+ private void watchWork(String name,TextView label,boolean periodic,boolean timed){
+  androidx.lifecycle.LiveData<List<WorkInfo>> live=timed?WorkManager.getInstance(this).getWorkInfosByTagLiveData(name)
+   :WorkManager.getInstance(this).getWorkInfosForUniqueWorkLiveData(name);
   androidx.lifecycle.Observer<List<WorkInfo>> observer=rows->{
    if(isDestroyed())return;
    if(rows==null||rows.isEmpty()){label.setText(periodic?"Schedule: off":"Manual: ready");return;}
    WorkInfo selected=rows.get(0);
    for(WorkInfo row:rows)if(!row.getState().isFinished()){selected=row;if(row.getState()==WorkInfo.State.RUNNING)break;}
-   String prefix=periodic?"Daily: ":"Manual: ";
+   if(timed&&selected.getState()!=WorkInfo.State.RUNNING){
+    for(WorkInfo row:rows)if(row.getState()==WorkInfo.State.ENQUEUED
+     &&(selected.getState()!=WorkInfo.State.ENQUEUED||row.getNextScheduleTimeMillis()<selected.getNextScheduleTimeMillis()))selected=row;
+   }
+   String prefix=timed?"Schedule: ":periodic?"Daily: ":"Manual: ";
    switch(selected.getState()){
     case RUNNING:
      Data progress=selected.getProgress();
@@ -172,7 +178,9 @@ public final class MainActivity extends Activity {
      label.setText(prefix+"Running - "+file+transfer+"\n"+progress.getInt("uploaded",0)
       +" uploaded, "+progress.getInt("unchanged",0)+" unchanged, "+progress.getInt("conflicts",0)+" conflicts");
      break;
-    case ENQUEUED: label.setText(prefix+(periodic?"Scheduled / waiting for Android and selected conditions":"Queued / waiting for network, battery or another backup")+(selected.getRunAttemptCount()>0?" - retry pending":""));break;
+    case ENQUEUED: label.setText(prefix+(timed?(selected.getNextScheduleTimeMillis()>System.currentTimeMillis()
+      ?"Next: "+java.text.DateFormat.getDateTimeInstance().format(new Date(selected.getNextScheduleTimeMillis()))
+      :"Due / waiting for Android and selected conditions"):periodic?"Scheduled / waiting for Android and selected conditions":"Queued / waiting for network, battery or another backup")+(selected.getRunAttemptCount()>0?" - retry pending":""));break;
     case SUCCEEDED: label.setText(prefix+selected.getOutputData().getString("summary"));break;
     case FAILED: label.setText(prefix+"Failed or conflicts - see Backup activity; tap Back up now / Retry");break;
     case CANCELLED: label.setText(prefix+"Cancelled / off. An accepted cloud request may still finish.");break;
@@ -182,10 +190,12 @@ public final class MainActivity extends Activity {
   live.observeForever(observer);unwatch.add(()->live.removeObserver(observer));
  }
  private void cancelBackup(JSONObject pair){
-  new AlertDialog.Builder(this).setTitle("Cancel backup?").setMessage("Stop queued and running backups for this folder and turn off its daily schedule. Completed files and history are kept. A request already accepted by OneDrive may finish.").setNegativeButton("Keep running",null).setPositiveButton("Cancel backup",(d,w)->{
-   try{JSONObject saved=Store.pair(this,pair.getString("id"));saved.put("daily",false);Store.update(this,saved);
-    WorkManager wm=WorkManager.getInstance(this);wm.cancelUniqueWork("manual-"+pair.optString("id"));wm.cancelUniqueWork("scheduled-"+pair.optString("id"));
-    Store.history(this,pair.optString("id"),pair.optString("name")+": cancellation requested; daily schedule turned off. Completed uploads and history kept.");draw();loadAccount();
+  new AlertDialog.Builder(this).setTitle("Cancel backup?").setMessage("Stop queued and running backups for this folder and turn off its schedule. Completed files and history are kept. A request already accepted by OneDrive may finish.").setNegativeButton("Keep running",null).setPositiveButton("Cancel backup",(d,w)->{
+   try{JSONObject saved=Store.pair(this,pair.getString("id"));synchronized(BackupSchedule.class){
+    saved.put("daily",false).put("scheduleMode",0).put("scheduleGeneration","");
+    Store.update(this,saved);BackupSchedule.cancel(this,pair.optString("id"));}
+    WorkManager wm=WorkManager.getInstance(this);wm.cancelUniqueWork("manual-"+pair.optString("id"));
+    Store.history(this,pair.optString("id"),pair.optString("name")+": cancellation requested; schedule turned off. Completed uploads and history kept.");draw();loadAccount();
    }catch(Exception e){message("Could not cancel backup. Try again.");}
   }).show();
  }
@@ -198,15 +208,20 @@ public final class MainActivity extends Activity {
    EditText exclude=new EditText(this);exclude.setHint("Exclusions, one pattern per line");exclude.setText(pair.optString("exclude"));form.addView(exclude);
    CheckBox wifi=new CheckBox(this);wifi.setText("Unmetered network only");wifi.setChecked(pair.optBoolean("unmetered",true));form.addView(wifi);
    CheckBox charging=new CheckBox(this);charging.setText("Only while charging");charging.setChecked(pair.optBoolean("charging"));form.addView(charging);
-   CheckBox daily=new CheckBox(this);daily.setText("Back up daily (approximate)");daily.setChecked(pair.optBoolean("daily"));form.addView(daily);
+   ScheduleEditor schedule=new ScheduleEditor(this,form,pair);
    ScrollView scroll=new ScrollView(this);scroll.addView(form);
    AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Edit backup settings").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
    dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
     try{String title=name.getText().toString().trim();if(title.isEmpty()){name.setError("Enter a backup name");return;}
-     pair.put("name",title).put("exclude",exclude.getText().toString()).put("unmetered",wifi.isChecked()).put("charging",charging.isChecked()).put("daily",daily.isChecked());Store.update(this,pair);
-     if(daily.isChecked())BackupWorker.enqueue(this,pair,true);else WorkManager.getInstance(this).cancelUniqueWork("scheduled-"+pair.getString("id"));
+     pair.put("name",title).put("exclude",exclude.getText().toString()).put("unmetered",wifi.isChecked()).put("charging",charging.isChecked());
+     long due=schedule.apply(pair);
+     synchronized(BackupSchedule.class){
+      Store.update(this,pair);BackupSchedule.cancel(this,pair.getString("id"));
+      if(due>0)BackupSchedule.enqueue(this,pair,due);
+     }
+
      dialog.dismiss();draw();loadAccount();
-    }catch(Exception e){message("Could not save backup settings.");}
+    }catch(IllegalArgumentException e){message(e.getMessage());}catch(Exception e){message("Could not save backup settings.");}
    }));dialog.show();
   }catch(Exception e){message("Could not load backup settings.");}
  }
@@ -266,13 +281,15 @@ public final class MainActivity extends Activity {
   EditText exclude=new EditText(this);exclude.setHint("Exclusions, one pattern per line: *.tmp");form.addView(exclude);
   CheckBox wifi=new CheckBox(this);wifi.setText("Unmetered network only");wifi.setChecked(true);form.addView(wifi);
   CheckBox charging=new CheckBox(this);charging.setText("Only while charging");form.addView(charging);
-  CheckBox daily=new CheckBox(this);daily.setText("Back up daily (approximate)");form.addView(daily);
-  AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Create folder backup").setView(form).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
+  ScheduleEditor schedule=new ScheduleEditor(this,form,new JSONObject());
+  ScrollView scroll=new ScrollView(this);scroll.addView(form);
+  AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Create folder backup").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
   dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
    try{String title=name.getText().toString().trim();if(title.isEmpty()){name.setError("Enter a backup name");return;}
-    JSONObject pair=new JSONObject().put("id",UUID.randomUUID().toString()).put("name",title).put("local",pendingLocal).put("remote",remote).put("remoteName",remoteName).put("account",owner).put("exclude",exclude.getText()).put("unmetered",wifi.isChecked()).put("charging",charging.isChecked()).put("daily",daily.isChecked());
-    Store.add(this,pair);if(daily.isChecked())BackupWorker.enqueue(this,pair,true);dialog.dismiss();draw();loadAccount();
-   }catch(Exception e){message("Could not save folder backup.");}
+    JSONObject pair=new JSONObject().put("id",UUID.randomUUID().toString()).put("name",title).put("local",pendingLocal).put("remote",remote).put("remoteName",remoteName).put("account",owner).put("exclude",exclude.getText().toString()).put("unmetered",wifi.isChecked()).put("charging",charging.isChecked());
+    long due=schedule.apply(pair);
+    synchronized(BackupSchedule.class){Store.add(this,pair);if(due>0)BackupSchedule.enqueue(this,pair,due);}dialog.dismiss();draw();loadAccount();
+   }catch(IllegalArgumentException e){message(e.getMessage());}catch(Exception e){message("Could not save folder backup.");}
   }));dialog.show();
  }
  private Graph graphForPair(JSONObject pair)throws Exception{
