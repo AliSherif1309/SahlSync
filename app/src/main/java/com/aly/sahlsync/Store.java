@@ -33,12 +33,21 @@ final class Store {
    if(raw instanceof String){JSONObject value=new JSONObject((String)raw);if(pair.equals(value.optString("pair")))files.put(value);}
   }return files;
  }
- static synchronized void history(Context c,String message){
+ static synchronized void history(Context c,String pairId,String message){
   try{
    JSONArray old=new JSONArray(prefs(c).getString("history","[]")),fresh=new JSONArray();
-   fresh.put(new JSONObject().put("time",System.currentTimeMillis()).put("message",message));
+   JSONObject entry=new JSONObject().put("time",System.currentTimeMillis()).put("pairId",pairId).put("message",message);
+   fresh.put(entry);
    for(int i=0;i<Math.min(old.length(),49);i++)fresh.put(old.get(i));
-   prefs(c).edit().putString("history",fresh.toString()).commit();
+   SharedPreferences.Editor edit=prefs(c).edit().putString("history",fresh.toString());
+   if(pairId!=null){
+    String key="history-"+pairId;
+    JSONArray previous=new JSONArray(prefs(c).getString(key,"[]"));
+    JSONArray folderHistory=new JSONArray().put(entry);
+    for(int i=0;i<Math.min(previous.length(),49);i++)folderHistory.put(previous.get(i));
+    edit.putString(key,folderHistory.toString());
+   }
+   edit.commit();
   }catch(Exception ignored){/* History must never contain credentials or response bodies. */}
  }
 }

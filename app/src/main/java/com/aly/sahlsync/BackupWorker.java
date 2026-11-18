@@ -39,15 +39,15 @@ public final class BackupWorker extends Worker {
     Graph graph=new Graph(auth.getAccessToken());
     walk(c,graph,local.getUri(),pair.getString("remote"),"",pair,0);
     BackupCancellation.check();
-    Store.history(c,"Backup finished: "+uploaded+" uploaded, "+unchanged+" unchanged, "+excluded+" excluded, "+conflicts+" conflicts.");
+    Store.history(c,getInputData().getString("pair"),"Backup finished: "+uploaded+" uploaded, "+unchanged+" unchanged, "+excluded+" excluded, "+conflicts+" conflicts.");
     return conflicts==0?Result.success(new Data.Builder().putString("summary","Completed: "+uploaded+" uploaded, "+unchanged+" unchanged").build()):Result.failure(new Data.Builder().putString("summary",conflicts+" conflicts - see History").build());
    }catch(Graph.HttpError e){
     if(isStopped())return Result.failure();
     boolean retry=e.status==429||e.status>=500;
-    Store.history(c,current+": "+(retry&&getRunAttemptCount()<3?"OneDrive is busy. Automatic retry queued.":"OneDrive HTTP "+e.status+". Check connection, sign-in, quota and destination access; then tap Back up now to retry."));
+    Store.history(c,getInputData().getString("pair"),current+": "+(retry&&getRunAttemptCount()<3?"OneDrive is busy. Automatic retry queued.":"OneDrive HTTP "+e.status+". Check connection, sign-in, quota and destination access; then tap Back up now to retry."));
     return retry&&getRunAttemptCount()<3?Result.retry():Result.failure();
    }catch(Exception e){
-    Store.history(c,isStopped()?"Backup stopped; completed uploads are kept.":current+": stopped after "+uploaded+" uploads. "+failureHint(e)+" Tap Back up now to retry; completed files are kept.");
+    Store.history(c,getInputData().getString("pair"),isStopped()?"Backup stopped; completed uploads are kept.":current+": stopped after "+uploaded+" uploads. "+failureHint(e)+" Tap Back up now to retry; completed files are kept.");
     return Result.failure();
    }finally{BackupCancellation.clear();}
   }
@@ -88,11 +88,11 @@ public final class BackupWorker extends Worker {
    VersionedBackup.Receipt known=saved==null?null:new VersionedBackup.Receipt(saved.getString("id"),saved.optString("tag"),saved.getString("hash"),saved.getLong("size"));
    VersionedBackup.Result result;
    try{result=VersionedBackup.backup(new OneDriveBackup(c,graph,pair,parent,relative,name),name,stage,hash,known);}
-   catch(Graph.HttpError e){if(e.status!=409&&e.status!=412)throw e;conflicts++;Store.history(c,relative+": cloud conflict (HTTP "+e.status+"). No overwrite. Check the cloud copy before retrying.");return;}
+   catch(Graph.HttpError e){if(e.status!=409&&e.status!=412)throw e;conflicts++;Store.history(c,getInputData().getString("pair"),relative+": cloud conflict (HTTP "+e.status+"). No overwrite. Check the cloud copy before retrying.");return;}
    switch(result.outcome){
     case CREATED: case UPDATED: uploaded++;break;
     case UNCHANGED: unchanged++;break;
-    case CONFLICT: conflicts++;Store.history(c,relative+": cloud contents changed or belong to an unknown file. No overwrite. Check the cloud copy before retrying.");return;
+    case CONFLICT: conflicts++;Store.history(c,getInputData().getString("pair"),relative+": cloud contents changed or belong to an unknown file. No overwrite. Check the cloud copy before retrying.");return;
    }
    Store.receipt(c,pair.getString("id"),relative,name,result.receipt);
    progress();
