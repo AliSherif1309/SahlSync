@@ -112,6 +112,7 @@ public final class MainActivity extends Activity {
     watchWork("manual-"+pair.optString("id"),manual,false);
     watchWork("scheduled-"+pair.optString("id"),scheduled,true);
     actions.addView(SahlTheme.button(this,"Edit backup settings",()->editPair(pair)));
+    actions.addView(SahlTheme.button(this,"Backup activity",()->showFolderHistory(pair)));
     actions.addView(SahlTheme.button(this,"Version history",()->showVersionFiles(pair)));
 
    }
@@ -160,7 +161,7 @@ public final class MainActivity extends Activity {
     case RUNNING: Data progress=selected.getProgress();label.setText(prefix+"Running - "+progress.getString("file")+"\n"+progress.getInt("uploaded",0)+" uploaded, "+progress.getInt("unchanged",0)+" unchanged, "+progress.getInt("conflicts",0)+" conflicts");break;
     case ENQUEUED: label.setText(prefix+(periodic?"Scheduled / waiting for Android and selected conditions":"Queued / waiting for network, battery or another backup")+(selected.getRunAttemptCount()>0?" - retry pending":""));break;
     case SUCCEEDED: label.setText(prefix+selected.getOutputData().getString("summary"));break;
-    case FAILED: label.setText(prefix+"Failed or conflicts - see History; tap Back up now / Retry");break;
+    case FAILED: label.setText(prefix+"Failed or conflicts - see Backup activity; tap Back up now / Retry");break;
     case CANCELLED: label.setText(prefix+"Cancelled / off. An accepted cloud request may still finish.");break;
     default: label.setText(prefix+"Waiting");
    }
@@ -171,7 +172,7 @@ public final class MainActivity extends Activity {
   new AlertDialog.Builder(this).setTitle("Cancel backup?").setMessage("Stop queued and running backups for this folder and turn off its daily schedule. Completed files and history are kept. A request already accepted by OneDrive may finish.").setNegativeButton("Keep running",null).setPositiveButton("Cancel backup",(d,w)->{
    try{JSONObject saved=Store.pair(this,pair.getString("id"));saved.put("daily",false);Store.update(this,saved);
     WorkManager wm=WorkManager.getInstance(this);wm.cancelUniqueWork("manual-"+pair.optString("id"));wm.cancelUniqueWork("scheduled-"+pair.optString("id"));
-    Store.history(this,pair.optString("name")+": cancellation requested; daily schedule turned off. Completed uploads and history kept.");draw();loadAccount();
+    Store.history(this,pair.optString("id"),pair.optString("name")+": cancellation requested; daily schedule turned off. Completed uploads and history kept.");draw();loadAccount();
    }catch(Exception e){message("Could not cancel backup. Try again.");}
   }).show();
  }
@@ -196,9 +197,17 @@ public final class MainActivity extends Activity {
    }));dialog.show();
   }catch(Exception e){message("Could not load backup settings.");}
  }
+ private void showFolderHistory(JSONObject pair){
+  ScrollView list=new ScrollView(this);
+  String entries=historyText("history-"+pair.optString("id"),50);
+  list.addView(SahlTheme.label(this,entries,15,SahlTheme.TEXT));
+  new AlertDialog.Builder(this).setTitle(pair.optString("name")+" - Backup activity")
+   .setView(list).setPositiveButton("Close",null).show();
+ }
  private void refreshHistory(){history.setText(historyText(3));}
- private String historyText(int limit){
-  try{JSONArray all=new JSONArray(Store.prefs(this).getString("history","[]"));StringBuilder text=new StringBuilder();for(int i=0;i<Math.min(limit,all.length());i++){JSONObject row=all.getJSONObject(i);text.append(java.text.DateFormat.getDateTimeInstance().format(new Date(row.getLong("time")))).append('\n').append(row.getString("message")).append("\n\n");}return text.length()==0?"No backup runs yet.":text.toString();}
+ private String historyText(int limit){return historyText("history",limit);}
+ private String historyText(String key,int limit){
+  try{JSONArray all=new JSONArray(Store.prefs(this).getString(key,"[]"));StringBuilder text=new StringBuilder();for(int i=0;i<Math.min(limit,all.length());i++){JSONObject row=all.getJSONObject(i);text.append(java.text.DateFormat.getDateTimeInstance().format(new Date(row.getLong("time")))).append('\n').append(row.getString("message")).append("\n\n");}return text.length()==0?"No backup runs yet.":text.toString();}
   catch(Exception e){return "History is unavailable.";}
  }
  private void updateAccountButtons(){
