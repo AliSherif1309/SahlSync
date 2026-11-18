@@ -33,9 +33,54 @@ public final class MainActivity extends Activity {
   if(saved!=null){String cached=saved.getString("snapshot");if(cached!=null){java.io.File file=new java.io.File(cached);try{if(file.getCanonicalFile().getParentFile().equals(getCacheDir().getCanonicalFile()))pendingSnapshot=file;}catch(java.io.IOException ignored){}}pendingSnapshotName=saved.getString("snapshotName");}
   Store.prefs(this).registerOnSharedPreferenceChangeListener(historyListener);
   draw();
+  if(saved==null&&!Store.prefs(this).getBoolean("setupSeen",false))showBackgroundSetup();
   if(Auth.configured())io.execute(()->{try{ISingleAccountPublicClientApplication app=Auth.open(getApplicationContext());runOnUiThread(()->{auth=app;loadAccount();});}catch(Exception e){runOnUiThread(()->{status.setText("Could not initialize Microsoft sign-in. Reopen the app to retry.");});}});
  }
- @Override protected void onResume(){super.onResume();if(auth!=null)loadAccount();}
+ @Override protected void onResume(){super.onResume();BackupNotifications.refreshStatus(this);if(auth!=null)loadAccount();}
+ private void showBackgroundSetup(){
+  Store.prefs(this).edit().putBoolean("setupSeen",true).apply();
+  LinearLayout form=new LinearLayout(this);
+  form.setOrientation(LinearLayout.VERTICAL);
+  int pad=SahlTheme.dp(this,20);
+  form.setPadding(pad,pad,pad,pad);
+  form.addView(SahlTheme.label(this,"Allow notifications for backup results and an optional pinned status. Folder access is requested when you choose a backup folder.",15,SahlTheme.TEXT));
+  CheckBox results=new CheckBox(this);
+  results.setText("Notify when a backup finishes");
+  results.setChecked(Store.prefs(this).getBoolean("backupResults",true));
+  form.addView(results);
+  CheckBox pinned=new CheckBox(this);
+  pinned.setText("Pin Sahl Sync in the notification bar");
+  pinned.setChecked(Store.prefs(this).getBoolean("pinnedStatus",false));
+  form.addView(pinned);
+  form.addView(SahlTheme.label(this,"If Android delays scheduled backups, check your phone's background app settings. On Honor, look for App launch and Run in background.",14,SahlTheme.MUTED));
+  ScrollView scroll=new ScrollView(this);
+  scroll.addView(form);
+  new AlertDialog.Builder(this).setTitle("Background & notifications").setView(scroll)
+   .setNegativeButton("Close",null)
+   .setNeutralButton("App settings",(dialog,button)->{
+    saveNotificationOptions(results.isChecked(),pinned.isChecked());
+    startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.fromParts("package",getPackageName(),null)));
+   })
+   .setPositiveButton("Save",(dialog,button)->{
+    saveNotificationOptions(results.isChecked(),pinned.isChecked());
+    if((results.isChecked()||pinned.isChecked())&&!BackupNotifications.permitted(this)){
+     if(android.os.Build.VERSION.SDK_INT>=33&&checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED)
+      requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS},610);
+     else startActivity(new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+      .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE,getPackageName()));
+    }
+   }).show();
+ }
+
+ private void saveNotificationOptions(boolean results,boolean pinned){
+  Store.prefs(this).edit().putBoolean("backupResults",results).putBoolean("pinnedStatus",pinned).apply();
+  BackupNotifications.refreshStatus(this);
+ }
+
+ @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
+  super.onRequestPermissionsResult(requestCode,permissions,results);
+  if(requestCode==610)BackupNotifications.refreshStatus(this);
+ }
  private void loadAccount(){auth.getCurrentAccountAsync(new ISingleAccountPublicClientApplication.CurrentAccountCallback(){
   public void onAccountLoaded(IAccount a){account=a;status.setText(a==null?"Not connected to OneDrive":"Connected: "+a.getUsername());updateAccountButtons();}
   public void onAccountChanged(IAccount prior,IAccount current){account=current;updateAccountButtons();}
@@ -58,6 +103,7 @@ public final class MainActivity extends Activity {
   LinearLayout connect=card("Microsoft account");status=SahlTheme.label(this,Auth.configured()?"Loading account...":"Microsoft sign-in setup is pending for this build.",16,SahlTheme.MUTED);connect.addView(status);
   connectButton=SahlTheme.button(this,"Connect OneDrive",this::connect);connect.addView(connectButton);
   disconnectButton=SahlTheme.button(this,"Disconnect",this::disconnect);connect.addView(disconnectButton);updateAccountButtons();
+  connect.addView(SahlTheme.button(this,"Background & notifications",this::showBackgroundSetup));
   LinearLayout pairs=card("Folder backups");
   pairs.addView(SahlTheme.label(this,"Upload-only. One current file keeps its original name. Before an update, Sahl Sync stores a verified older copy in its history folder. No automatic history deletion. Alpha limit: 128 MiB per file and 5,000 items per run.",15,SahlTheme.MUTED));
   pairs.addView(SahlTheme.button(this,"Add folder backup",()->{
