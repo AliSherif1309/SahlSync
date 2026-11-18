@@ -6,6 +6,7 @@ import androidx.annotation.NonNull;
 import androidx.documentfile.provider.DocumentFile;
 import androidx.work.*;
 import com.microsoft.identity.client.*;
+import com.microsoft.identity.client.exception.*;
 import org.json.*;
 import java.io.*;
 import java.util.*;
@@ -56,7 +57,7 @@ public final class BackupWorker extends Worker {
     }
     folderName=pair.optString("name","Sahl Sync");
     IAuthenticationResult auth=Auth.token(Auth.open(c));
-    if(!auth.getAccount().getId().equals(pair.getString("account")))throw new IOException("Account changed; recreate this folder pair");
+    if(!auth.getAccount().getId().equals(pair.getString("account")))throw new Auth.SignInRequired();
     DocumentFile local=DocumentFile.fromTreeUri(c,Uri.parse(pair.getString("local")));
     if(local==null||!local.isDirectory()||!local.canRead())throw new IOException("Local folder permission is unavailable; select it again");
     Graph graph=new Graph(auth.getAccessToken());
@@ -69,25 +70,55 @@ public final class BackupWorker extends Worker {
    }catch(Graph.HttpError e){
     if(isStopped())return Result.failure();
     boolean retry=e.status==429||e.status>=500;
-    Store.history(c,getInputData().getString("pair"),current+": "+(retry&&getRunAttemptCount()<3?"OneDrive is busy. Automatic retry queued.":"OneDrive HTTP "+e.status+". Check connection, sign-in, quota and destination access; then tap Back up now to retry."));
-    if(retry&&getRunAttemptCount()<3)return Result.retry();
+    Store.history(c,getInputData().getString("pair"),current+": "+(retry&&getRunAttemptCount()<BackupRetry.MAX_RETRIES?"OneDrive is busy. Automatic retry queued.":"OneDrive HTTP "+e.status+". Check connection, sign-in, quota and destination access; then tap Back up now to retry."));
+    if(retry&&getRunAttemptCount()<BackupRetry.MAX_RETRIES)return Result.retry();
     notifyResult("Could not finish. Open Backup activity to see details.");
     return Result.failure();
    }catch(UploadSession.ConnectionFailure e){
-    boolean retry=!isStopped()&&getRunAttemptCount()<3;
+    boolean retry=!isStopped()&&getRunAttemptCount()<BackupRetry.MAX_RETRIES;
     Store.history(c,getInputData().getString("pair"),current+": "+(retry
      ?"Upload interrupted. Automatic retry queued."
      :"Upload interrupted. Tap Back up now to retry."));
     if(retry)return Result.retry();
     notifyResult("Upload interrupted. Open Backup activity to retry.");
     return Result.failure();
+   }catch(MsalUiRequiredException|Auth.SignInRequired e){
+    return signInRequired(c);
+   }catch(MsalException e){
+    String code=e.getErrorCode();
+    String diagnostic=code!=null&&code.matches("[a-zA-Z0-9_]{1,48}")?" ("+code+")":"";
+    if(BackupRetry.transientAuthCode(code)||BackupRetry.connectionFailure(e))
+     return retryConnection(c,"OneDrive connection unavailable"+diagnostic+".");
+    if(isStopped())return Result.failure();
+    Store.history(c,getInputData().getString("pair"),"OneDrive connection failed"+diagnostic+".");
+    notifyResult("Could not connect to OneDrive. See Backup activity.");
+    return Result.failure();
    }catch(Exception e){
+    if(BackupRetry.connectionFailure(e))
+     return retryConnection(c,"Network interrupted while checking or uploading "+current+".");
     Store.history(c,getInputData().getString("pair"),isStopped()?"Backup stopped; completed uploads are kept.":current+": stopped after "+uploaded+" uploads. "+failureHint(e)+" Tap Back up now to retry; completed files are kept.");
     notifyResult("Could not finish. Open Backup activity to see details.");
     return Result.failure();
    }finally{BackupCancellation.clear();}
   }
  }
+ private Result signInRequired(Context context){
+  if(isStopped())return Result.failure();
+  Store.history(context,getInputData().getString("pair"),"Microsoft sign-in required. Check your OneDrive account in Sahl Sync.");
+  notifyResult("Microsoft sign-in required. Open Sahl Sync to check your account.");
+  return Result.failure();
+ }
+
+ private Result retryConnection(Context context,String reason){
+  if(isStopped())return Result.failure();
+  boolean retry=getRunAttemptCount()<BackupRetry.MAX_RETRIES;
+  Store.history(context,getInputData().getString("pair"),reason
+   +(retry?" Automatic retry queued.":" Retry limit reached. Check your connection and try again."));
+  if(retry)return Result.retry();
+  notifyResult("Network unavailable after retries. See Backup activity.");
+  return Result.failure();
+ }
+
  private void notifyResult(String summary){
   if(isStopped())return;
   Data input=getInputData();
@@ -97,8 +128,6 @@ public final class BackupWorker extends Worker {
 
  private static String failureHint(Exception e){
   if(e instanceof IllegalArgumentException)return "Check unsupported file names.";
-  if(e instanceof com.microsoft.identity.client.exception.MsalException)return "Connect OneDrive again.";
-  if(e instanceof java.net.SocketTimeoutException||e instanceof java.net.UnknownHostException)return "Check your network connection.";
   return "Check folder access, free storage and the 128 MiB file limit.";
  }
  private void walk(Context c,Graph graph,Uri source,String remote,String path,JSONObject pair,int depth)throws Exception{
