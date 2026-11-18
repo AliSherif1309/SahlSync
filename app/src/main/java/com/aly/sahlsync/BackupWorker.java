@@ -13,6 +13,8 @@ import java.util.concurrent.TimeUnit;
 
 public final class BackupWorker extends Worker {
  private int uploaded,unchanged,excluded,conflicts,visited;
+ private String current="Connecting";
+ private void progress(){setProgressAsync(new Data.Builder().putString("file",current.length()>500?current.substring(0,500)+"...":current).putInt("uploaded",uploaded).putInt("unchanged",unchanged).putInt("conflicts",conflicts).build());}
  private final Set<String> seen=new HashSet<>();
  public BackupWorker(@NonNull Context c,@NonNull WorkerParameters p){super(c,p);}
  static Constraints constraints(JSONObject pair){return new Constraints.Builder().setRequiredNetworkType(pair.optBoolean("unmetered",true)?NetworkType.UNMETERED:NetworkType.CONNECTED).setRequiresCharging(pair.optBoolean("charging",false)).setRequiresBatteryNotLow(true).build();}
@@ -26,7 +28,9 @@ public final class BackupWorker extends Worker {
   Context c=getApplicationContext();
   // A process-wide lock also serializes manual and periodic requests for different pairs.
   synchronized(BackupWorker.class){
+   BackupCancellation.bind(this::isStopped);
    try{
+    BackupCancellation.check();progress();
     JSONObject pair=Store.pair(c,getInputData().getString("pair"));
     IAuthenticationResult auth=Auth.token(Auth.open(c));
     if(!auth.getAccount().getId().equals(pair.getString("account")))throw new IOException("Account changed; recreate this folder pair");
@@ -34,17 +38,25 @@ public final class BackupWorker extends Worker {
     if(local==null||!local.isDirectory()||!local.canRead())throw new IOException("Local folder permission is unavailable; select it again");
     Graph graph=new Graph(auth.getAccessToken());
     walk(c,graph,local.getUri(),pair.getString("remote"),"",pair,0);
+    BackupCancellation.check();
     Store.history(c,"Backup finished: "+uploaded+" uploaded, "+unchanged+" unchanged, "+excluded+" excluded, "+conflicts+" conflicts.");
-    return conflicts==0?Result.success():Result.failure();
+    return conflicts==0?Result.success(new Data.Builder().putString("summary","Completed: "+uploaded+" uploaded, "+unchanged+" unchanged").build()):Result.failure(new Data.Builder().putString("summary",conflicts+" conflicts - see History").build());
    }catch(Graph.HttpError e){
+    if(isStopped())return Result.failure();
     boolean retry=e.status==429||e.status>=500;
-    Store.history(c,retry?"OneDrive is busy. Backup will retry.":"OneDrive rejected the request (HTTP "+e.status+"). Check sign-in and folder access.");
+    Store.history(c,current+": "+(retry&&getRunAttemptCount()<3?"OneDrive is busy. Automatic retry queued.":"OneDrive HTTP "+e.status+". Check connection, sign-in, quota and destination access; then tap Back up now to retry."));
     return retry&&getRunAttemptCount()<3?Result.retry():Result.failure();
    }catch(Exception e){
-    Store.history(c,isStopped()?"Backup stopped; completed uploads are kept.":"Backup stopped after "+uploaded+" uploads. Check sign-in, folder access, storage, file names and the 20 MiB file limit.");
+    Store.history(c,isStopped()?"Backup stopped; completed uploads are kept.":current+": stopped after "+uploaded+" uploads. "+failureHint(e)+" Tap Back up now to retry; completed files are kept.");
     return Result.failure();
-   }
+   }finally{BackupCancellation.clear();}
   }
+ }
+ private static String failureHint(Exception e){
+  if(e instanceof IllegalArgumentException)return "Check unsupported file names.";
+  if(e instanceof com.microsoft.identity.client.exception.MsalException)return "Connect OneDrive again.";
+  if(e instanceof java.net.SocketTimeoutException||e instanceof java.net.UnknownHostException)return "Check your network connection.";
+  return "Check folder access, free storage and the 20 MiB file limit.";
  }
  private void walk(Context c,Graph graph,Uri source,String remote,String path,JSONObject pair,int depth)throws Exception{
   if(depth>32||!seen.add(source.toString()))throw new IOException("Folder nesting limit reached");
@@ -57,7 +69,7 @@ public final class BackupWorker extends Worker {
     if(++visited>5000)throw new IOException("Alpha limit: 5000 items per run");
     String name=cursor.getString(1),relative=path+name;
     if(relative.equals(OneDriveBackup.HISTORY)||relative.startsWith(OneDriveBackup.HISTORY+"/")||BackupRules.excluded(relative,pair.optString("exclude"))){excluded++;continue;}
-    BackupRules.validateName(name);
+    current=relative;progress();BackupRules.validateName(name);
     Uri uri=android.provider.DocumentsContract.buildDocumentUriUsingTree(source,cursor.getString(0));
     if(android.provider.DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(2))){
      walk(c,graph,uri,graph.folder(remote,name),relative+"/",pair,depth+1);
@@ -76,14 +88,14 @@ public final class BackupWorker extends Worker {
    VersionedBackup.Receipt known=saved==null?null:new VersionedBackup.Receipt(saved.getString("id"),saved.optString("tag"),saved.getString("hash"),saved.getLong("size"));
    VersionedBackup.Result result;
    try{result=VersionedBackup.backup(new OneDriveBackup(c,graph,pair,parent,relative,name),name,stage,hash,known);}
-   catch(Graph.HttpError e){if(e.status!=409&&e.status!=412)throw e;conflicts++;return;}
+   catch(Graph.HttpError e){if(e.status!=409&&e.status!=412)throw e;conflicts++;Store.history(c,relative+": cloud conflict (HTTP "+e.status+"). No overwrite. Check the cloud copy before retrying.");return;}
    switch(result.outcome){
     case CREATED: case UPDATED: uploaded++;break;
     case UNCHANGED: unchanged++;break;
-    case CONFLICT: conflicts++;return;
+    case CONFLICT: conflicts++;Store.history(c,relative+": cloud contents changed or belong to an unknown file. No overwrite. Check the cloud copy before retrying.");return;
    }
    Store.receipt(c,pair.getString("id"),relative,name,result.receipt);
-   setProgressAsync(new Data.Builder().putInt("uploaded",uploaded).build());
+   progress();
   }finally{stage.delete();}
  }
 }

@@ -16,6 +16,7 @@ final class RemoteContent {
   try(OutputStream out=new FileOutputStream(destination)){return transfer(graphAddress,token,uri->(HttpURLConnection)uri.toURL().openConnection(),out);}
  }
  private static String transfer(String graphAddress,String token,Connections connections,OutputStream output)throws Exception{
+  BackupCancellation.check();
   URI address=URI.create(graphAddress);
   if(!"https".equals(address.getScheme())||!"graph.microsoft.com".equals(address.getHost())||address.getUserInfo()!=null)throw new IOException("Untrusted Graph address");
   for(int hop=0;hop<6;hop++){

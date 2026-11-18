@@ -21,6 +21,7 @@ final class Graph {
   return request(method,address,data,type,null);
  }
  JSONObject request(String method,String address,byte[] data,String type,String ifMatch)throws Exception{
+  BackupCancellation.check();
   URI uri=URI.create(address);
   if(!"https".equals(uri.getScheme())||!"graph.microsoft.com".equals(uri.getHost()))throw new IOException("Untrusted Graph address");
   HttpURLConnection c=(HttpURLConnection)uri.toURL().openConnection();
@@ -28,7 +29,7 @@ final class Graph {
    c.setInstanceFollowRedirects(false); c.setConnectTimeout(30000); c.setReadTimeout(60000);
    c.setRequestMethod(method);c.setRequestProperty("Authorization","Bearer "+token);
    if(ifMatch!=null)c.setRequestProperty("If-Match",ifMatch);
-   if(data!=null){c.setDoOutput(true);c.setRequestProperty("Content-Type",type);c.setFixedLengthStreamingMode(data.length);try(OutputStream out=c.getOutputStream()){out.write(data);}}
+   if(data!=null){c.setDoOutput(true);c.setRequestProperty("Content-Type",type);c.setFixedLengthStreamingMode(data.length);try(OutputStream out=c.getOutputStream()){for(int offset=0;offset<data.length;offset+=65536){BackupCancellation.check();out.write(data,offset,Math.min(65536,data.length-offset));}}}
    int status=c.getResponseCode(); if(status<200||status>=300)throw new HttpError(status);
    try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
     byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1){out.write(b,0,n);if(out.size()>4*1024*1024)throw new IOException("Response too large");}
