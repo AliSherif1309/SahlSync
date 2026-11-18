@@ -429,8 +429,15 @@ public final class MainActivity extends Activity {
  }
 
  private void takeFolderGrant(Intent data){
-  int flags=data.getFlags()&(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-  getContentResolver().takePersistableUriPermission(data.getData(),flags);
+  int flags=data.getFlags();
+  if((flags&Intent.FLAG_GRANT_READ_URI_PERMISSION)==0)
+   throw new SecurityException("Phone folder read permission was not granted");
+  if((flags&Intent.FLAG_GRANT_WRITE_URI_PERMISSION)!=0){
+   getContentResolver().takePersistableUriPermission(data.getData(),
+    Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+  }else{
+   getContentResolver().takePersistableUriPermission(data.getData(),Intent.FLAG_GRANT_READ_URI_PERMISSION);
+  }
  }
 
  private void completeWriteGrant(int result,Intent data){
