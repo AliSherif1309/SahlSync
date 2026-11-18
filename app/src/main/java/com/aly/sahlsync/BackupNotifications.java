@@ -40,7 +40,7 @@ final class BackupNotifications {
  private static Notification.Builder builder(Context context,String channel){
   Intent open=new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);
   PendingIntent action=PendingIntent.getActivity(context,0,open,PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
-  return new Notification.Builder(context,channel).setSmallIcon(android.R.drawable.stat_sys_upload).setContentIntent(action);
+  return new Notification.Builder(context,channel).setSmallIcon(R.drawable.ic_backup_notification).setContentIntent(action);
  }
 
  private static void post(Context context,String tag,int id,Notification notification){
