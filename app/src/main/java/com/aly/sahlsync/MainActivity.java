@@ -158,7 +158,20 @@ public final class MainActivity extends Activity {
    for(WorkInfo row:rows)if(!row.getState().isFinished()){selected=row;if(row.getState()==WorkInfo.State.RUNNING)break;}
    String prefix=periodic?"Daily: ":"Manual: ";
    switch(selected.getState()){
-    case RUNNING: Data progress=selected.getProgress();label.setText(prefix+"Running - "+progress.getString("file")+"\n"+progress.getInt("uploaded",0)+" uploaded, "+progress.getInt("unchanged",0)+" unchanged, "+progress.getInt("conflicts",0)+" conflicts");break;
+    case RUNNING:
+     Data progress=selected.getProgress();
+     String file=Objects.toString(progress.getString("file"),"Preparing backup");
+     long total=progress.getLong("totalBytes",0);
+     String transfer="";
+     if(total>0){
+      long accepted=progress.getLong("acceptedBytes",0);
+      String verb=progress.getBoolean("resumed",false)?"Resumed upload":"Uploading";
+      transfer=String.format(Locale.getDefault(),"\n%s: %.1f / %.1f MiB (%d%%)",
+       verb,accepted/1048576.0,total/1048576.0,accepted*100/total);
+     }
+     label.setText(prefix+"Running - "+file+transfer+"\n"+progress.getInt("uploaded",0)
+      +" uploaded, "+progress.getInt("unchanged",0)+" unchanged, "+progress.getInt("conflicts",0)+" conflicts");
+     break;
     case ENQUEUED: label.setText(prefix+(periodic?"Scheduled / waiting for Android and selected conditions":"Queued / waiting for network, battery or another backup")+(selected.getRunAttemptCount()>0?" - retry pending":""));break;
     case SUCCEEDED: label.setText(prefix+selected.getOutputData().getString("summary"));break;
     case FAILED: label.setText(prefix+"Failed or conflicts - see Backup activity; tap Back up now / Retry");break;
