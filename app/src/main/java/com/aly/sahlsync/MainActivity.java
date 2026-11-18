@@ -33,9 +33,54 @@ public final class MainActivity extends Activity {
   if(saved!=null){String cached=saved.getString("snapshot");if(cached!=null){java.io.File file=new java.io.File(cached);try{if(file.getCanonicalFile().getParentFile().equals(getCacheDir().getCanonicalFile()))pendingSnapshot=file;}catch(java.io.IOException ignored){}}pendingSnapshotName=saved.getString("snapshotName");}
   Store.prefs(this).registerOnSharedPreferenceChangeListener(historyListener);
   draw();
+  if(saved==null&&!Store.prefs(this).getBoolean("setupSeen",false))showBackgroundSetup();
   if(Auth.configured())io.execute(()->{try{ISingleAccountPublicClientApplication app=Auth.open(getApplicationContext());runOnUiThread(()->{auth=app;loadAccount();});}catch(Exception e){runOnUiThread(()->{status.setText("Could not initialize Microsoft sign-in. Reopen the app to retry.");});}});
  }
- @Override protected void onResume(){super.onResume();if(auth!=null)loadAccount();}
+ @Override protected void onResume(){super.onResume();BackupNotifications.refreshStatus(this);if(auth!=null)loadAccount();}
+ private void showBackgroundSetup(){
+  Store.prefs(this).edit().putBoolean("setupSeen",true).apply();
+  LinearLayout form=new LinearLayout(this);
+  form.setOrientation(LinearLayout.VERTICAL);
+  int pad=SahlTheme.dp(this,20);
+  form.setPadding(pad,pad,pad,pad);
+  form.addView(SahlTheme.label(this,"Allow notifications for backup results and an optional pinned status. Folder access is requested when you choose a backup folder.",15,SahlTheme.TEXT));
+  CheckBox results=new CheckBox(this);
+  results.setText("Notify when a backup finishes");
+  results.setChecked(Store.prefs(this).getBoolean("backupResults",true));
+  form.addView(results);
+  CheckBox pinned=new CheckBox(this);
+  pinned.setText("Pin Sahl Sync in the notification bar");
+  pinned.setChecked(Store.prefs(this).getBoolean("pinnedStatus",false));
+  form.addView(pinned);
+  form.addView(SahlTheme.label(this,"If Android delays scheduled backups, check your phone's background app settings. On Honor, look for App launch and Run in background.",14,SahlTheme.MUTED));
+  ScrollView scroll=new ScrollView(this);
+  scroll.addView(form);
+  new AlertDialog.Builder(this).setTitle("Background & notifications").setView(scroll)
+   .setNegativeButton("Close",null)
+   .setNeutralButton("App settings",(dialog,button)->{
+    saveNotificationOptions(results.isChecked(),pinned.isChecked());
+    startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.fromParts("package",getPackageName(),null)));
+   })
+   .setPositiveButton("Save",(dialog,button)->{
+    saveNotificationOptions(results.isChecked(),pinned.isChecked());
+    if((results.isChecked()||pinned.isChecked())&&!BackupNotifications.permitted(this)){
+     if(android.os.Build.VERSION.SDK_INT>=33&&checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED)
+      requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS},610);
+     else startActivity(new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+      .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE,getPackageName()));
+    }
+   }).show();
+ }
+
+ private void saveNotificationOptions(boolean results,boolean pinned){
+  Store.prefs(this).edit().putBoolean("backupResults",results).putBoolean("pinnedStatus",pinned).apply();
+  BackupNotifications.refreshStatus(this);
+ }
+
+ @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
+  super.onRequestPermissionsResult(requestCode,permissions,results);
+  if(requestCode==610)BackupNotifications.refreshStatus(this);
+ }
  private void loadAccount(){auth.getCurrentAccountAsync(new ISingleAccountPublicClientApplication.CurrentAccountCallback(){
   public void onAccountLoaded(IAccount a){account=a;status.setText(a==null?"Not connected to OneDrive":"Connected: "+a.getUsername());updateAccountButtons();}
   public void onAccountChanged(IAccount prior,IAccount current){account=current;updateAccountButtons();}
@@ -58,6 +103,7 @@ public final class MainActivity extends Activity {
   LinearLayout connect=card("Microsoft account");status=SahlTheme.label(this,Auth.configured()?"Loading account...":"Microsoft sign-in setup is pending for this build.",16,SahlTheme.MUTED);connect.addView(status);
   connectButton=SahlTheme.button(this,"Connect OneDrive",this::connect);connect.addView(connectButton);
   disconnectButton=SahlTheme.button(this,"Disconnect",this::disconnect);connect.addView(disconnectButton);updateAccountButtons();
+  connect.addView(SahlTheme.button(this,"Background & notifications",this::showBackgroundSetup));
   LinearLayout pairs=card("Folder backups");
   pairs.addView(SahlTheme.label(this,"Upload-only. One current file keeps its original name. Before an update, Sahl Sync stores a verified older copy in its history folder. No automatic history deletion. Alpha limit: 128 MiB per file and 5,000 items per run.",15,SahlTheme.MUTED));
   pairs.addView(SahlTheme.button(this,"Add folder backup",()->{
@@ -104,13 +150,14 @@ public final class MainActivity extends Activity {
      heading.setText(title+" / "+(expanded?"Hide controls":"Show controls"));
     });
     entry.addView(heading);
-    entry.addView(SahlTheme.label(this,"Phone to "+pair.getString("remoteName")+"\n"+(pair.optBoolean("unmetered")?"Unmetered network":"Any network")+(pair.optBoolean("charging")?" / Charging":"")+(pair.optBoolean("daily")?" / Daily":" / Manual"),14,SahlTheme.MUTED));
+    entry.addView(SahlTheme.label(this,"Phone to "+pair.getString("remoteName")+"\n"+(pair.optBoolean("unmetered")?"Unmetered network":"Any network")+(pair.optBoolean("charging")?" / Charging":"")+(pair.optBoolean("daily")||pair.optInt("scheduleMode")!=0?" / Scheduled":" / Manual"),14,SahlTheme.MUTED));
     TextView manual=SahlTheme.label(this,"",14,SahlTheme.MUTED),scheduled=SahlTheme.label(this,"",14,SahlTheme.MUTED);
     entry.addView(manual);entry.addView(scheduled);entry.addView(actions);
     Button backup=SahlTheme.button(this,"Back up now / Retry",()->BackupWorker.enqueue(this,pair,false));actions.addView(backup);
     Button cancel=SahlTheme.button(this,"Cancel current backup",()->cancelBackup(pair));actions.addView(cancel);
-    watchWork("manual-"+pair.optString("id"),manual,false);
-    watchWork("scheduled-"+pair.optString("id"),scheduled,true);
+    watchWork("manual-"+pair.optString("id"),manual,false,false);
+    String generation=pair.optString("scheduleGeneration");
+    watchWork(generation.isEmpty()?"scheduled-"+id:generation,scheduled,true,!generation.isEmpty());
     actions.addView(SahlTheme.button(this,"Edit backup settings",()->editPair(pair)));
     actions.addView(SahlTheme.button(this,"Backup activity",()->showFolderHistory(pair)));
     actions.addView(SahlTheme.button(this,"Version history",()->showVersionFiles(pair)));
@@ -149,14 +196,19 @@ public final class MainActivity extends Activity {
   }));
   log.addView(history);
  }
- private void watchWork(String name,TextView label,boolean periodic){
-  androidx.lifecycle.LiveData<List<WorkInfo>> live=WorkManager.getInstance(this).getWorkInfosForUniqueWorkLiveData(name);
+ private void watchWork(String name,TextView label,boolean periodic,boolean timed){
+  androidx.lifecycle.LiveData<List<WorkInfo>> live=timed?WorkManager.getInstance(this).getWorkInfosByTagLiveData(name)
+   :WorkManager.getInstance(this).getWorkInfosForUniqueWorkLiveData(name);
   androidx.lifecycle.Observer<List<WorkInfo>> observer=rows->{
    if(isDestroyed())return;
    if(rows==null||rows.isEmpty()){label.setText(periodic?"Schedule: off":"Manual: ready");return;}
    WorkInfo selected=rows.get(0);
    for(WorkInfo row:rows)if(!row.getState().isFinished()){selected=row;if(row.getState()==WorkInfo.State.RUNNING)break;}
-   String prefix=periodic?"Daily: ":"Manual: ";
+   if(timed&&selected.getState()!=WorkInfo.State.RUNNING){
+    for(WorkInfo row:rows)if(row.getState()==WorkInfo.State.ENQUEUED
+     &&(selected.getState()!=WorkInfo.State.ENQUEUED||row.getNextScheduleTimeMillis()<selected.getNextScheduleTimeMillis()))selected=row;
+   }
+   String prefix=timed?"Schedule: ":periodic?"Daily: ":"Manual: ";
    switch(selected.getState()){
     case RUNNING:
      Data progress=selected.getProgress();
@@ -172,7 +224,9 @@ public final class MainActivity extends Activity {
      label.setText(prefix+"Running - "+file+transfer+"\n"+progress.getInt("uploaded",0)
       +" uploaded, "+progress.getInt("unchanged",0)+" unchanged, "+progress.getInt("conflicts",0)+" conflicts");
      break;
-    case ENQUEUED: label.setText(prefix+(periodic?"Scheduled / waiting for Android and selected conditions":"Queued / waiting for network, battery or another backup")+(selected.getRunAttemptCount()>0?" - retry pending":""));break;
+    case ENQUEUED: label.setText(prefix+(timed?(selected.getNextScheduleTimeMillis()>System.currentTimeMillis()
+      ?"Next: "+java.text.DateFormat.getDateTimeInstance().format(new Date(selected.getNextScheduleTimeMillis()))
+      :"Due / waiting for Android and selected conditions"):periodic?"Scheduled / waiting for Android and selected conditions":"Queued / waiting for network, battery or another backup")+(selected.getRunAttemptCount()>0?" - retry pending":""));break;
     case SUCCEEDED: label.setText(prefix+selected.getOutputData().getString("summary"));break;
     case FAILED: label.setText(prefix+"Failed or conflicts - see Backup activity; tap Back up now / Retry");break;
     case CANCELLED: label.setText(prefix+"Cancelled / off. An accepted cloud request may still finish.");break;
@@ -182,10 +236,12 @@ public final class MainActivity extends Activity {
   live.observeForever(observer);unwatch.add(()->live.removeObserver(observer));
  }
  private void cancelBackup(JSONObject pair){
-  new AlertDialog.Builder(this).setTitle("Cancel backup?").setMessage("Stop queued and running backups for this folder and turn off its daily schedule. Completed files and history are kept. A request already accepted by OneDrive may finish.").setNegativeButton("Keep running",null).setPositiveButton("Cancel backup",(d,w)->{
-   try{JSONObject saved=Store.pair(this,pair.getString("id"));saved.put("daily",false);Store.update(this,saved);
-    WorkManager wm=WorkManager.getInstance(this);wm.cancelUniqueWork("manual-"+pair.optString("id"));wm.cancelUniqueWork("scheduled-"+pair.optString("id"));
-    Store.history(this,pair.optString("id"),pair.optString("name")+": cancellation requested; daily schedule turned off. Completed uploads and history kept.");draw();loadAccount();
+  new AlertDialog.Builder(this).setTitle("Cancel backup?").setMessage("Stop queued and running backups for this folder and turn off its schedule. Completed files and history are kept. A request already accepted by OneDrive may finish.").setNegativeButton("Keep running",null).setPositiveButton("Cancel backup",(d,w)->{
+   try{JSONObject saved=Store.pair(this,pair.getString("id"));synchronized(BackupSchedule.class){
+    saved.put("daily",false).put("scheduleMode",0).put("scheduleGeneration","");
+    Store.update(this,saved);BackupSchedule.cancel(this,pair.optString("id"));}
+    WorkManager wm=WorkManager.getInstance(this);wm.cancelUniqueWork("manual-"+pair.optString("id"));
+    Store.history(this,pair.optString("id"),pair.optString("name")+": cancellation requested; schedule turned off. Completed uploads and history kept.");draw();loadAccount();
    }catch(Exception e){message("Could not cancel backup. Try again.");}
   }).show();
  }
@@ -198,15 +254,20 @@ public final class MainActivity extends Activity {
    EditText exclude=new EditText(this);exclude.setHint("Exclusions, one pattern per line");exclude.setText(pair.optString("exclude"));form.addView(exclude);
    CheckBox wifi=new CheckBox(this);wifi.setText("Unmetered network only");wifi.setChecked(pair.optBoolean("unmetered",true));form.addView(wifi);
    CheckBox charging=new CheckBox(this);charging.setText("Only while charging");charging.setChecked(pair.optBoolean("charging"));form.addView(charging);
-   CheckBox daily=new CheckBox(this);daily.setText("Back up daily (approximate)");daily.setChecked(pair.optBoolean("daily"));form.addView(daily);
+   ScheduleEditor schedule=new ScheduleEditor(this,form,pair);
    ScrollView scroll=new ScrollView(this);scroll.addView(form);
    AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Edit backup settings").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
    dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
     try{String title=name.getText().toString().trim();if(title.isEmpty()){name.setError("Enter a backup name");return;}
-     pair.put("name",title).put("exclude",exclude.getText().toString()).put("unmetered",wifi.isChecked()).put("charging",charging.isChecked()).put("daily",daily.isChecked());Store.update(this,pair);
-     if(daily.isChecked())BackupWorker.enqueue(this,pair,true);else WorkManager.getInstance(this).cancelUniqueWork("scheduled-"+pair.getString("id"));
+     pair.put("name",title).put("exclude",exclude.getText().toString()).put("unmetered",wifi.isChecked()).put("charging",charging.isChecked());
+     long due=schedule.apply(pair);
+     synchronized(BackupSchedule.class){
+      Store.update(this,pair);BackupSchedule.cancel(this,pair.getString("id"));
+      if(due>0)BackupSchedule.enqueue(this,pair,due);
+     }
+
      dialog.dismiss();draw();loadAccount();
-    }catch(Exception e){message("Could not save backup settings.");}
+    }catch(IllegalArgumentException e){message(e.getMessage());}catch(Exception e){message("Could not save backup settings.");}
    }));dialog.show();
   }catch(Exception e){message("Could not load backup settings.");}
  }
@@ -266,13 +327,15 @@ public final class MainActivity extends Activity {
   EditText exclude=new EditText(this);exclude.setHint("Exclusions, one pattern per line: *.tmp");form.addView(exclude);
   CheckBox wifi=new CheckBox(this);wifi.setText("Unmetered network only");wifi.setChecked(true);form.addView(wifi);
   CheckBox charging=new CheckBox(this);charging.setText("Only while charging");form.addView(charging);
-  CheckBox daily=new CheckBox(this);daily.setText("Back up daily (approximate)");form.addView(daily);
-  AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Create folder backup").setView(form).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
+  ScheduleEditor schedule=new ScheduleEditor(this,form,new JSONObject());
+  ScrollView scroll=new ScrollView(this);scroll.addView(form);
+  AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Create folder backup").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
   dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
    try{String title=name.getText().toString().trim();if(title.isEmpty()){name.setError("Enter a backup name");return;}
-    JSONObject pair=new JSONObject().put("id",UUID.randomUUID().toString()).put("name",title).put("local",pendingLocal).put("remote",remote).put("remoteName",remoteName).put("account",owner).put("exclude",exclude.getText()).put("unmetered",wifi.isChecked()).put("charging",charging.isChecked()).put("daily",daily.isChecked());
-    Store.add(this,pair);if(daily.isChecked())BackupWorker.enqueue(this,pair,true);dialog.dismiss();draw();loadAccount();
-   }catch(Exception e){message("Could not save folder backup.");}
+    JSONObject pair=new JSONObject().put("id",UUID.randomUUID().toString()).put("name",title).put("local",pendingLocal).put("remote",remote).put("remoteName",remoteName).put("account",owner).put("exclude",exclude.getText().toString()).put("unmetered",wifi.isChecked()).put("charging",charging.isChecked());
+    long due=schedule.apply(pair);
+    synchronized(BackupSchedule.class){Store.add(this,pair);if(due>0)BackupSchedule.enqueue(this,pair,due);}dialog.dismiss();draw();loadAccount();
+   }catch(IllegalArgumentException e){message(e.getMessage());}catch(Exception e){message("Could not save folder backup.");}
   }));dialog.show();
  }
  private Graph graphForPair(JSONObject pair)throws Exception{

@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 public final class BackupWorker extends Worker {
  private int uploaded,unchanged,excluded,conflicts,visited;
  private String current="Connecting";
+ private String folderName="Sahl Sync";
  private void progress(){progress(0,0,false);}
  private void progress(long accepted,long total,boolean resumed){
   setProgressAsync(new Data.Builder()
@@ -25,7 +26,7 @@ public final class BackupWorker extends Worker {
  public BackupWorker(@NonNull Context c,@NonNull WorkerParameters p){super(c,p);}
  static Constraints constraints(JSONObject pair){return new Constraints.Builder().setRequiredNetworkType(pair.optBoolean("unmetered",true)?NetworkType.UNMETERED:NetworkType.CONNECTED).setRequiresCharging(pair.optBoolean("charging",false)).setRequiresBatteryNotLow(true).build();}
  static void enqueue(Context c,JSONObject pair,boolean periodic){
-  String id=pair.optString("id");Data data=new Data.Builder().putString("pair",id).build();
+  String id=pair.optString("id");Data data=new Data.Builder().putString("pair",id).putBoolean("legacyDaily",periodic).build();
   WorkManager wm=WorkManager.getInstance(c);
   if(periodic)wm.enqueueUniquePeriodicWork("scheduled-"+id,ExistingPeriodicWorkPolicy.UPDATE,new PeriodicWorkRequest.Builder(BackupWorker.class,24,TimeUnit.HOURS).setInputData(data).setConstraints(constraints(pair)).build());
   else wm.enqueueUniqueWork("manual-"+id,ExistingWorkPolicy.KEEP,new OneTimeWorkRequest.Builder(BackupWorker.class).setInputData(data).setConstraints(constraints(pair)).build());
@@ -37,7 +38,23 @@ public final class BackupWorker extends Worker {
    BackupCancellation.bind(this::isStopped);
    try{
     BackupCancellation.check();progress();
-    JSONObject pair=Store.pair(c,getInputData().getString("pair"));
+    JSONObject pair;
+    synchronized(BackupSchedule.class){
+     pair=Store.pair(c,getInputData().getString("pair"));
+     String generation=getInputData().getString("scheduleGeneration");
+     if(generation!=null){
+      if(!generation.equals(pair.optString("scheduleGeneration")))return Result.success();
+      int days=pair.optInt("scheduleDays");
+      if(days!=0){
+       long after=Math.max(System.currentTimeMillis(),getInputData().getLong("scheduleDue",0));
+       long next=BackupSchedule.next(java.time.Instant.ofEpochMilli(after),java.time.ZoneId.systemDefault(),
+        pair.getInt("scheduleHour"),pair.getInt("scheduleMinute"),days);
+       BackupSchedule.enqueue(c,pair,next).getResult().get();
+      }
+      if(getRunAttemptCount()==0)Store.history(c,pair.optString("id"),"Scheduled backup started.");
+     }else if(getInputData().getBoolean("legacyDaily",false)&&!pair.optBoolean("daily"))return Result.success();
+    }
+    folderName=pair.optString("name","Sahl Sync");
     IAuthenticationResult auth=Auth.token(Auth.open(c));
     if(!auth.getAccount().getId().equals(pair.getString("account")))throw new IOException("Account changed; recreate this folder pair");
     DocumentFile local=DocumentFile.fromTreeUri(c,Uri.parse(pair.getString("local")));
@@ -46,25 +63,38 @@ public final class BackupWorker extends Worker {
     graph.enableResumableUploads(c,getInputData().getString("pair"),this::progress);
     walk(c,graph,local.getUri(),pair.getString("remote"),"",pair,0);
     BackupCancellation.check();
-    Store.history(c,getInputData().getString("pair"),"Backup finished: "+uploaded+" uploaded, "+unchanged+" unchanged, "+excluded+" excluded, "+conflicts+" conflicts.");
+    Store.history(c,getInputData().getString("pair"),(getInputData().getString("scheduleGeneration")!=null?"Scheduled backup finished: ":"Backup finished: ")+uploaded+" uploaded, "+unchanged+" unchanged, "+excluded+" excluded, "+conflicts+" conflicts.");
+    notifyResult(uploaded+" uploaded, "+unchanged+" unchanged, "+conflicts+" conflicts.");
     return conflicts==0?Result.success(new Data.Builder().putString("summary","Completed: "+uploaded+" uploaded, "+unchanged+" unchanged").build()):Result.failure(new Data.Builder().putString("summary",conflicts+" conflicts - see History").build());
    }catch(Graph.HttpError e){
     if(isStopped())return Result.failure();
     boolean retry=e.status==429||e.status>=500;
     Store.history(c,getInputData().getString("pair"),current+": "+(retry&&getRunAttemptCount()<3?"OneDrive is busy. Automatic retry queued.":"OneDrive HTTP "+e.status+". Check connection, sign-in, quota and destination access; then tap Back up now to retry."));
-    return retry&&getRunAttemptCount()<3?Result.retry():Result.failure();
+    if(retry&&getRunAttemptCount()<3)return Result.retry();
+    notifyResult("Could not finish. Open Backup activity to see details.");
+    return Result.failure();
    }catch(UploadSession.ConnectionFailure e){
     boolean retry=!isStopped()&&getRunAttemptCount()<3;
     Store.history(c,getInputData().getString("pair"),current+": "+(retry
      ?"Upload interrupted. Automatic retry queued."
      :"Upload interrupted. Tap Back up now to retry."));
-    return retry?Result.retry():Result.failure();
+    if(retry)return Result.retry();
+    notifyResult("Upload interrupted. Open Backup activity to retry.");
+    return Result.failure();
    }catch(Exception e){
     Store.history(c,getInputData().getString("pair"),isStopped()?"Backup stopped; completed uploads are kept.":current+": stopped after "+uploaded+" uploads. "+failureHint(e)+" Tap Back up now to retry; completed files are kept.");
+    notifyResult("Could not finish. Open Backup activity to see details.");
     return Result.failure();
    }finally{BackupCancellation.clear();}
   }
  }
+ private void notifyResult(String summary){
+  if(isStopped())return;
+  Data input=getInputData();
+  boolean scheduled=input.getString("scheduleGeneration")!=null||input.getBoolean("legacyDaily",false);
+  BackupNotifications.finished(getApplicationContext(),input.getString("pair"),folderName,scheduled,summary);
+ }
+
  private static String failureHint(Exception e){
   if(e instanceof IllegalArgumentException)return "Check unsupported file names.";
   if(e instanceof com.microsoft.identity.client.exception.MsalException)return "Connect OneDrive again.";
