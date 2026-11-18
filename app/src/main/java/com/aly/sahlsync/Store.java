@@ -10,6 +10,12 @@ final class Store {
  static synchronized void add(Context c,JSONObject pair)throws Exception{
   JSONArray all=pairs(c);all.put(pair);if(!prefs(c).edit().putString("pairs",all.toString()).commit())throw new java.io.IOException("Could not save folder pair");
  }
+ static synchronized void update(Context c,JSONObject pair)throws Exception{
+  JSONArray all=pairs(c);boolean found=false;
+  for(int i=0;i<all.length();i++)if(all.getJSONObject(i).getString("id").equals(pair.getString("id"))){all.put(i,pair);found=true;break;}
+  if(!found)throw new java.io.IOException("Folder pair not found");
+  if(!prefs(c).edit().putString("pairs",all.toString()).commit())throw new java.io.IOException("Could not save settings");
+ }
  static JSONObject pair(Context c,String id)throws Exception{
   JSONArray all=pairs(c);for(int i=0;i<all.length();i++)if(all.getJSONObject(i).getString("id").equals(id))return all.getJSONObject(i);
   throw new java.io.IOException("Folder pair not found");

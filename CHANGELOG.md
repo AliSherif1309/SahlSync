@@ -1,3 +1,10 @@
+## 0.3.0-alpha1
+- Live manual/daily work status and per-file counters; history updates automatically.
+- Edit backup name, exclusions, network, charging and daily schedule without recreating the pair.
+- Cancel a pair's queued/running backup and disable daily scheduling; accepted cloud requests may finish.
+- File-specific conflict history, retry hints and cooperative cancellation during streaming and before cloud mutations.
+- Settings apply to subsequent runs. Cancel disables daily backup; enable it again in Edit backup settings.
+
 # Changes
 
 ## 0.2.0-alpha1
