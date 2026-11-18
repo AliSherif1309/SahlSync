@@ -9,6 +9,9 @@ import java.util.Arrays;
 final class Auth {
  static final String[] SCOPES={"https://graph.microsoft.com/Files.ReadWrite"};
  static boolean configured(){return !BuildConfig.MSAL_CLIENT_ID.startsWith("00000000-") && !BuildConfig.MSAL_SIGNATURE.equals("UNCONFIGURED");}
+ static final class SignInRequired extends IOException {
+  SignInRequired(){super("Sign in to Microsoft to continue");}
+ }
  // Call on a worker thread. MSAL alone owns the encrypted credential cache.
  static ISingleAccountPublicClientApplication open(Context c) throws Exception {
   if(!configured())throw new IOException("Microsoft app registration is not configured in this build");
@@ -25,7 +28,7 @@ final class Auth {
  }
  static IAuthenticationResult token(ISingleAccountPublicClientApplication app) throws Exception {
   IAccount account=app.getCurrentAccount().getCurrentAccount();
-  if(account==null)throw new IOException("Sign in to Microsoft to continue");
+  if(account==null)throw new SignInRequired();
   return app.acquireTokenSilent(new AcquireTokenSilentParameters.Builder().withScopes(Arrays.asList(SCOPES))
    .forAccount(account).fromAuthority(account.getAuthority()).build());
  }
