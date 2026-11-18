@@ -24,6 +24,8 @@ public final class MainActivity extends Activity {
  private final List<Runnable> unwatch=new ArrayList<>();
  private final android.content.SharedPreferences.OnSharedPreferenceChangeListener historyListener=(prefs,key)->{if("history".equals(key))runOnUiThread(this::refreshHistory);};
  private String pendingLocal;
+ private String folderQuery="";
+ private String openFolder;
  private java.io.File pendingSnapshot;
  private String pendingSnapshotName;
  @Override public void onCreate(Bundle saved){
@@ -49,7 +51,7 @@ public final class MainActivity extends Activity {
   ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);
   scroll.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,new int[]{SahlTheme.TOP,SahlTheme.BOTTOM}));
   scroll.setOnApplyWindowInsetsListener((v,insets)->{v.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());return insets;});
-  content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);int p=SahlTheme.dp(this,20);content.setPadding(p,p,p,p);scroll.addView(content);setContentView(scroll);
+  content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);content.setFocusableInTouchMode(true);int p=SahlTheme.dp(this,20);content.setPadding(p,p,p,p);scroll.addView(content);setContentView(scroll);content.requestFocus();
   content.addView(SahlTheme.label(this,"SAHL  /  SYNC",14,SahlTheme.GOLD));
   content.addView(SahlTheme.label(this,"Your folders. Backed up.",30,SahlTheme.TEXT));
   content.addView(SahlTheme.label(this,"OneDrive backup - Early preview",15,SahlTheme.MUTED));
@@ -64,20 +66,77 @@ public final class MainActivity extends Activity {
   }));
   try{
    JSONArray all=Store.pairs(this);
+   EditText search=new EditText(this);
+   search.setSingleLine(true);
+   search.setHint("Search folder backups");
+   search.setText(folderQuery);
+   if(all.length()>1)pairs.addView(search);
+   Map<View,String> searchable=new LinkedHashMap<>();
    if(all.length()==0)pairs.addView(SahlTheme.label(this,"No folders yet. Choose a folder on your phone, then a destination in OneDrive.",16,SahlTheme.MUTED));
    for(int i=0;i<all.length();i++){
     JSONObject pair=all.getJSONObject(i);
-    pairs.addView(SahlTheme.label(this,pair.getString("name"),18,SahlTheme.TEXT));
-    pairs.addView(SahlTheme.label(this,"Phone to "+pair.getString("remoteName")+"\n"+(pair.optBoolean("unmetered")?"Unmetered network":"Any network")+(pair.optBoolean("charging")?" / Charging":"")+(pair.optBoolean("daily")?" / Daily":" / Manual"),14,SahlTheme.MUTED));
+    String id=pair.getString("id");
+    String title=pair.getString("name");
+    LinearLayout entry=new LinearLayout(this);
+    entry.setOrientation(LinearLayout.VERTICAL);
+    entry.setPadding(0,SahlTheme.dp(this,12),0,0);
+    pairs.addView(entry);
+    searchable.put(entry,(title+" "+pair.getString("remoteName")).toLowerCase(Locale.ROOT));
+    LinearLayout actions=new LinearLayout(this);
+    actions.setOrientation(LinearLayout.VERTICAL);
+    actions.setVisibility(id.equals(openFolder)?View.VISIBLE:View.GONE);
+    Button heading=SahlTheme.button(this,"",()->{});
+    heading.setAllCaps(false);
+    heading.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);
+    heading.setText(title+" / "+(id.equals(openFolder)?"Hide controls":"Show controls"));
+    heading.setOnClickListener(view->{
+     boolean expanded=actions.getVisibility()!=View.VISIBLE;
+     for(View other:searchable.keySet()){
+      if(other!=entry){
+       LinearLayout row=(LinearLayout)other;
+       row.getChildAt(row.getChildCount()-1).setVisibility(View.GONE);
+       Button otherHeading=(Button)row.getChildAt(0);
+       otherHeading.setText(otherHeading.getText().toString().replaceFirst(" / Hide controls$"," / Show controls"));
+      }
+     }
+     openFolder=expanded?id:null;
+     actions.setVisibility(expanded?View.VISIBLE:View.GONE);
+     heading.setText(title+" / "+(expanded?"Hide controls":"Show controls"));
+    });
+    entry.addView(heading);
+    entry.addView(SahlTheme.label(this,"Phone to "+pair.getString("remoteName")+"\n"+(pair.optBoolean("unmetered")?"Unmetered network":"Any network")+(pair.optBoolean("charging")?" / Charging":"")+(pair.optBoolean("daily")?" / Daily":" / Manual"),14,SahlTheme.MUTED));
     TextView manual=SahlTheme.label(this,"",14,SahlTheme.MUTED),scheduled=SahlTheme.label(this,"",14,SahlTheme.MUTED);
-    pairs.addView(manual);pairs.addView(scheduled);
-    Button backup=SahlTheme.button(this,"Back up now / Retry",()->BackupWorker.enqueue(this,pair,false));pairs.addView(backup);
-    Button cancel=SahlTheme.button(this,"Cancel current backup",()->cancelBackup(pair));pairs.addView(cancel);
+    entry.addView(manual);entry.addView(scheduled);entry.addView(actions);
+    Button backup=SahlTheme.button(this,"Back up now / Retry",()->BackupWorker.enqueue(this,pair,false));actions.addView(backup);
+    Button cancel=SahlTheme.button(this,"Cancel current backup",()->cancelBackup(pair));actions.addView(cancel);
     watchWork("manual-"+pair.optString("id"),manual,false);
     watchWork("scheduled-"+pair.optString("id"),scheduled,true);
-    pairs.addView(SahlTheme.button(this,"Edit backup settings",()->editPair(pair)));
-    pairs.addView(SahlTheme.button(this,"Version history",()->showVersionFiles(pair)));
+    actions.addView(SahlTheme.button(this,"Edit backup settings",()->editPair(pair)));
+    actions.addView(SahlTheme.button(this,"Version history",()->showVersionFiles(pair)));
 
+   }
+   if(all.length()>1){
+    TextView empty=SahlTheme.label(this,"No matching folder backups.",15,SahlTheme.MUTED);
+    pairs.addView(empty);
+    Runnable filter=()->{
+     String query=folderQuery.trim().toLowerCase(Locale.ROOT);
+     boolean any=false;
+     for(Map.Entry<View,String> item:searchable.entrySet()){
+      boolean match=item.getValue().contains(query);
+      item.getKey().setVisibility(match?View.VISIBLE:View.GONE);
+      any|=match;
+     }
+     empty.setVisibility(any?View.GONE:View.VISIBLE);
+    };
+    search.addTextChangedListener(new android.text.TextWatcher(){
+     public void beforeTextChanged(CharSequence text,int start,int count,int after){}
+     public void onTextChanged(CharSequence text,int start,int before,int count){
+      folderQuery=text.toString();
+      filter.run();
+     }
+     public void afterTextChanged(android.text.Editable text){}
+    });
+    filter.run();
    }
   }catch(Exception e){message("Could not load folder backups.");}
   LinearLayout log=card("History");history=SahlTheme.label(this,"",15,SahlTheme.MUTED);refreshHistory();
