@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit;
 public final class BackupWorker extends Worker {
  private int uploaded,unchanged,excluded,conflicts,visited;
  private String current="Connecting";
- private void progress(){setProgressAsync(new Data.Builder().putString("file",current).putInt("uploaded",uploaded).putInt("unchanged",unchanged).putInt("conflicts",conflicts).build());}
+ private void progress(){setProgressAsync(new Data.Builder().putString("file",current.length()>500?current.substring(0,500)+"...":current).putInt("uploaded",uploaded).putInt("unchanged",unchanged).putInt("conflicts",conflicts).build());}
  private final Set<String> seen=new HashSet<>();
  public BackupWorker(@NonNull Context c,@NonNull WorkerParameters p){super(c,p);}
  static Constraints constraints(JSONObject pair){return new Constraints.Builder().setRequiredNetworkType(pair.optBoolean("unmetered",true)?NetworkType.UNMETERED:NetworkType.CONNECTED).setRequiresCharging(pair.optBoolean("charging",false)).setRequiresBatteryNotLow(true).build();}

@@ -12,6 +12,6 @@ public class BackupCancellationTest {
  }
  @Test public void cancellationIsConfinedToWorkerThread()throws Exception{
   BackupCancellation.bind(()->true);
-  try{Thread other=new Thread(()->{try{BackupCancellation.check();}catch(Exception e){throw new AssertionError(e);}});other.start();other.join();}finally{BackupCancellation.clear();}
+  try{java.util.concurrent.atomic.AtomicReference<Exception> failure=new java.util.concurrent.atomic.AtomicReference<>();Thread other=new Thread(()->{try{BackupCancellation.check();}catch(Exception e){failure.set(e);}});other.start();other.join();assertNull(failure.get());}finally{BackupCancellation.clear();}
  }
 }
