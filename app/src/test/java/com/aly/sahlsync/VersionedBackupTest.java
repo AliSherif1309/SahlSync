@@ -13,16 +13,33 @@ public class VersionedBackupTest {
  @After public void cleanup(){source.delete();}
  private void write(String value)throws Exception{try(OutputStream out=new FileOutputStream(source)){out.write(value.getBytes(StandardCharsets.UTF_8));}}
  private final class Backend implements VersionedBackup.Backend {
-  VersionedBackup.Item remote;String remoteHash;String createdName,conditionalTag;boolean archiveFails,race;int uploads,reads;
+  VersionedBackup.Item remote;String remoteHash;String createdName,conditionalTag;boolean archiveFails,race;int uploads,reads,lookups; VersionedBackup.Item resumed;
   final List<String> operations=new ArrayList<>(),archives=new ArrayList<>();
   Backend(String content)throws Exception{if(content!=null){remote=new VersionedBackup.Item("file-1","tag-1",content.length());remoteHash=VersionedBackupTest.this.hash(content);}}
-  public VersionedBackup.Item find(String name){return remote;}
+  public VersionedBackup.Item resumeCreate(String name,File source,String hash){return resumed;}
+  public VersionedBackup.Item find(String name){lookups++;return remote;}
   public String hash(VersionedBackup.Item item){reads++;return remoteHash;}
   public VersionedBackup.Item create(String name,File source)throws Exception{operations.add("create");createdName=name;uploads++;remote=new VersionedBackup.Item("file-1","tag-1",source.length());remoteHash=VersionedBackupTest.this.hash("new");return remote;}
   public void archive(VersionedBackup.Item item,String expected)throws Exception{operations.add("archive");if(archiveFails)throw new IOException("Archive storage unavailable");archives.add(expected);if(race){remote=new VersionedBackup.Item(remote.id,"cloud-edit",3);remoteHash=VersionedBackupTest.this.hash("web");}}
   public VersionedBackup.Item update(VersionedBackup.Item expected,File source)throws Exception{conditionalTag=expected.tag;if(!remote.tag.equals(expected.tag))throw new IOException("Precondition failed");operations.add("update");uploads++;remote=new VersionedBackup.Item(expected.id,"tag-next",source.length());return remote;}
  }
  private VersionedBackup.Receipt receipt(String content)throws Exception{return new VersionedBackup.Receipt("file-1","tag-1",hash(content),content.length());}
+ @Test public void resumesPendingCreationBeforeCheckingAPlaceholder()throws Exception{
+  Backend b=new Backend("");
+  b.resumed=new VersionedBackup.Item("file-1","finished-tag",source.length());
+  VersionedBackup.Result result=VersionedBackup.backup(b,"report.txt",source,hash("new"),null);
+  assertEquals(VersionedBackup.Outcome.CREATED,result.outcome);
+  assertEquals("finished-tag",result.receipt.tag);
+  assertEquals(0,b.lookups);
+  assertEquals(0,b.uploads);
+ }
+ @Test public void emptyCloudFileWithoutSessionStillConflicts()throws Exception{
+  Backend b=new Backend("");
+  VersionedBackup.Result result=VersionedBackup.backup(b,"report.txt",source,hash("new"),null);
+  assertEquals(VersionedBackup.Outcome.CONFLICT,result.outcome);
+  assertEquals(1,b.lookups);
+  assertEquals(0,b.uploads);
+ }
  @Test public void createsOneOriginalFilename()throws Exception{
   Backend b=new Backend(null);VersionedBackup.Result r=VersionedBackup.backup(b,"report.txt",source,hash("new"),null);
   assertEquals(VersionedBackup.Outcome.CREATED,r.outcome);assertEquals("report.txt",b.createdName);assertTrue(b.archives.isEmpty());

@@ -15,6 +15,10 @@ final class OneDriveBackup implements VersionedBackup.Backend {
   if(!json.has("file"))throw new IOException("A folder blocks the backup filename");
   return new VersionedBackup.Item(json.getString("id"),json.optString("eTag"),json.getLong("size"));
  }
+ public VersionedBackup.Item resumeCreate(String filename,File source,String hash)throws Exception{
+  JSONObject resumed=graph.resumeUpload(parent,filename,source,hash);
+  return resumed==null?null:item(resumed);
+ }
  public VersionedBackup.Item find(String filename)throws Exception{
   try{return item(graph.item(parent,filename));}catch(Graph.HttpError e){if(e.status==404)return null;throw e;}
  }

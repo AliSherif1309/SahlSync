@@ -50,6 +50,11 @@ final class Graph {
  }
  private String requireFolder(JSONObject item)throws Exception{if(!item.has("folder"))throw new IOException("A file blocks the destination folder");return item.getString("id");}
  String download(String itemId,File destination)throws Exception{return RemoteContent.download(ROOT+"/me/drive/items/"+Uri.encode(itemId)+"/content",token,destination);}
+ JSONObject resumeUpload(String parent,String name,File file,String hash)throws Exception{
+  if(uploads==null||file.length()<=10L*1024*1024)return null;
+  String path="/me/drive/items/"+Uri.encode(parent)+":/"+Uri.encode(name)+":";
+  return uploads.resume(path,file,hash);
+ }
  JSONObject upload(String parent,String name,File file) throws Exception {
   String path="/me/drive/items/"+Uri.encode(parent)+":/"+Uri.encode(name)+":";
   if(uploads!=null&&file.length()>10L*1024*1024)return uploads.create(path,file);

@@ -27,28 +27,36 @@ final class UploadSession {
  JSONObject create(String path,File file)throws Exception{
   String hash;
   try(InputStream input=new FileInputStream(file)){hash=BackupRules.hash(input,null);}
+  JSONObject resumed=resume(path,file,hash);
+  if(resumed!=null)return resumed;
+  JSONObject item=new JSONObject().put("@microsoft.graph.conflictBehavior","fail");
+  JSONObject created=graph.json("POST",path+"/createUploadSession",new JSONObject().put("item",item));
+  String url=created.getString("uploadUrl");
+  JSONObject checkpoint=new JSONObject().put("identity",path+"\n"+hash).put("url",url);
+  if(!checkpoints.edit().putString(pair,checkpoint.toString()).commit())
+   throw new IOException("Could not save upload checkpoint");
+  return send(url,file,0);
+ }
+
+ JSONObject resume(String path,File file,String hash)throws Exception{
+  JSONObject checkpoint=new JSONObject(checkpoints.getString(pair,"{}"));
+  if(!(path+"\n"+hash).equals(checkpoint.optString("identity")))return null;
+  String url=checkpoint.optString("url");
+  if(url.isEmpty())return null;
+  long offset;
+  try{
+   offset=nextOffset(request(url,null,0,0,file.length()),file.length());
+  }catch(Graph.HttpError error){
+   if(error.status!=404&&error.status!=410)throw error;
+   checkpoints.edit().remove(pair).apply();
+   return null;
+  }
+  Store.history(context,pair,"OneDrive upload checkpoint: "+offset+" of "+file.length()+" bytes already accepted.");
+  return send(url,file,offset);
+ }
+
+ private JSONObject send(String url,File file,long offset)throws Exception{
   long length=file.length();
-  String identity=path+"\n"+hash;
-  JSONObject state=new JSONObject(checkpoints.getString(pair,"{}"));
-  String url=identity.equals(state.optString("identity"))?state.optString("url"):"";
-  long offset=0;
-  if(!url.isEmpty()){
-   try{
-    offset=nextOffset(request(url,null,0,0,length),length);
-    Store.history(context,pair,"OneDrive upload checkpoint: "+offset+" of "+length+" bytes already accepted.");
-   }
-   catch(Graph.HttpError error){
-    if(error.status!=404&&error.status!=410)throw error;
-    url="";
-   }
-  }
-  if(url.isEmpty()){
-   JSONObject item=new JSONObject().put("@microsoft.graph.conflictBehavior","fail");
-   JSONObject created=graph.json("POST",path+"/createUploadSession",new JSONObject().put("item",item));
-   url=created.getString("uploadUrl");
-   if(!checkpoints.edit().putString(pair,new JSONObject().put("identity",identity).put("url",url).toString()).commit())
-    throw new IOException("Could not save upload checkpoint");
-  }
   try(RandomAccessFile input=new RandomAccessFile(file,"r")){
    byte[] bytes=new byte[CHUNK];
    while(offset<length){
@@ -58,6 +66,8 @@ final class UploadSession {
     input.readFully(bytes,0,count);
     JSONObject response=request(url,bytes,count,offset,length);
     if(response.has("id")){
+     if(!response.has("file")||response.optLong("size",-1)!=length)
+      throw new IOException("OneDrive returned an incomplete upload result");
      checkpoints.edit().remove(pair).apply();
      return response;
     }
