@@ -9,6 +9,8 @@ import java.nio.charset.StandardCharsets;
 final class Graph {
  static final String ROOT="https://graph.microsoft.com/v1.0";
  private final String token;
+ private UploadSession uploads;
+ void enableResumableUploads(android.content.Context context,String pair){uploads=new UploadSession(this,context,pair);}
  Graph(String token){this.token=token;}
  static final class HttpError extends IOException {
   final int status;
@@ -48,19 +50,47 @@ final class Graph {
  }
  private String requireFolder(JSONObject item)throws Exception{if(!item.has("folder"))throw new IOException("A file blocks the destination folder");return item.getString("id");}
  String download(String itemId,File destination)throws Exception{return RemoteContent.download(ROOT+"/me/drive/items/"+Uri.encode(itemId)+"/content",token,destination);}
+ JSONObject resumeUpload(String parent,String name,File file,String hash)throws Exception{
+  if(uploads==null||file.length()<=10L*1024*1024)return null;
+  String path="/me/drive/items/"+Uri.encode(parent)+":/"+Uri.encode(name)+":";
+  return uploads.resume(path,file,hash);
+ }
  JSONObject upload(String parent,String name,File file) throws Exception {
-  return putFile(ROOT+"/me/drive/items/"+Uri.encode(parent)+":/"+Uri.encode(name)+":/content?%40microsoft.graph.conflictBehavior=fail",file,"0");
+  String path="/me/drive/items/"+Uri.encode(parent)+":/"+Uri.encode(name)+":";
+  if(uploads!=null&&file.length()>10L*1024*1024)return uploads.create(path,file);
+  return putFile(ROOT+path+"/content?%40microsoft.graph.conflictBehavior=fail",file,"0");
  }
  JSONObject updateFile(String id,String expectedTag,File file)throws Exception{
   if(expectedTag==null||expectedTag.isEmpty())throw new IOException("Missing file tag");
   return putFile(ROOT+"/me/drive/items/"+Uri.encode(id)+"/content",file,expectedTag);
  }
  private JSONObject putFile(String address,File file,String ifMatch)throws Exception{
-  byte[] bytes;
-  try(InputStream in=new FileInputStream(file);ByteArrayOutputStream out=new ByteArrayOutputStream()){
-   byte[] b=new byte[65536];int n;while((n=in.read(b))!=-1){out.write(b,0,n);if(out.size()>BackupRules.MAX_FILE_BYTES)throw new IOException("File too large");}bytes=out.toByteArray();
-  }
-  return request("PUT",address,bytes,"application/octet-stream",ifMatch);
+  BackupCancellation.check();
+  long size=file.length();
+  if(size>BackupRules.MAX_FILE_BYTES)throw new IOException("File too large");
+  HttpURLConnection connection=(HttpURLConnection)URI.create(address).toURL().openConnection();
+  try {
+   connection.setInstanceFollowRedirects(false);
+   connection.setConnectTimeout(30000);
+   connection.setReadTimeout(60000);
+   connection.setRequestMethod("PUT");
+   connection.setRequestProperty("Authorization","Bearer "+token);
+   connection.setRequestProperty("If-Match",ifMatch);
+   connection.setRequestProperty("Content-Type","application/octet-stream");
+   connection.setDoOutput(true);
+   connection.setFixedLengthStreamingMode(size);
+   try(InputStream input=new FileInputStream(file);OutputStream output=connection.getOutputStream()){
+    byte[] buffer=new byte[65536];
+    int count;
+    while((count=input.read(buffer))!=-1){
+     BackupCancellation.check();
+     output.write(buffer,0,count);
+    }
+   }
+   int status=connection.getResponseCode();
+   if(status<200||status>=300)throw new HttpError(status);
+   return UploadSession.readJson(connection);
+  }finally{connection.disconnect();}
  }
  JSONArray folders(String parent)throws Exception{
   JSONArray all=children(parent),result=new JSONArray();for(int i=0;i<all.length();i++)if(all.getJSONObject(i).has("folder"))result.put(all.get(i));return result;
