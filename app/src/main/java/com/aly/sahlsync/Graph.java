@@ -96,7 +96,7 @@ final class Graph {
   JSONArray all=children(parent),result=new JSONArray();for(int i=0;i<all.length();i++)if(all.getJSONObject(i).has("folder"))result.put(all.get(i));return result;
  }
  JSONArray children(String parent)throws Exception{
-  JSONArray result=new JSONArray();String path="/me/drive/items/"+Uri.encode(parent)+"/children?$select=id,name,folder,file,size,createdDateTime&$top=200";
+  JSONArray result=new JSONArray();String path="/me/drive/items/"+Uri.encode(parent)+"/children?$select=id,name,folder,file,size,createdDateTime,lastModifiedDateTime,eTag,remoteItem,package&$top=200";
   int pages=0;
   while(path!=null){
    if(++pages>50)throw new IOException("Too many folders; choose a smaller folder");

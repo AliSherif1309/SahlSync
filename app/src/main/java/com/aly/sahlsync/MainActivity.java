@@ -25,12 +25,13 @@ public final class MainActivity extends Activity {
  private final List<Runnable> unwatch=new ArrayList<>();
  private final android.content.SharedPreferences.OnSharedPreferenceChangeListener historyListener=(prefs,key)->{if("history".equals(key))runOnUiThread(this::refreshHistory);};
  private String pendingLocal;
+ private String pendingWriteTree;
  private String folderQuery="";
  private String openFolder;
  private java.io.File pendingSnapshot;
  private String pendingSnapshotName;
  @Override public void onCreate(Bundle saved){
-  super.onCreate(saved);if(saved!=null)pendingLocal=saved.getString("local");
+  super.onCreate(saved);if(saved!=null){pendingLocal=saved.getString("local");pendingWriteTree=saved.getString("writePair");}
   if(saved!=null){String cached=saved.getString("snapshot");if(cached!=null){java.io.File file=new java.io.File(cached);try{if(file.getCanonicalFile().getParentFile().equals(getCacheDir().getCanonicalFile()))pendingSnapshot=file;}catch(java.io.IOException ignored){}}pendingSnapshotName=saved.getString("snapshotName");}
   Store.prefs(this).registerOnSharedPreferenceChangeListener(historyListener);
   draw();
@@ -189,10 +190,10 @@ public final class MainActivity extends Activity {
   disconnectButton=SahlTheme.button(this,"Disconnect an account",this::disconnect);connect.addView(disconnectButton);updateAccountButtons();
   connect.addView(SahlTheme.button(this,"Background & notifications",this::showBackgroundSetup));
   LinearLayout pairs=card("Folder backups");
-  pairs.addView(SahlTheme.label(this,"Upload-only. One current file keeps its original name. Before an update, Sahl Sync stores a verified older copy in its history folder. No automatic history deletion. Alpha limit: 128 MiB per file and 5,000 items per run.",15,SahlTheme.MUTED));
+  pairs.addView(SahlTheme.label(this,"Choose upload only, download only, or two-way sync. Two-way sync uses the newest modified copy and keeps the earlier copy. File deletions are never synced. Limit: 128 MiB per file.",15,SahlTheme.MUTED));
   pairs.addView(SahlTheme.button(this,"Add folder backup",()->{
    if(accounts.isEmpty()){message("Connect OneDrive first.");return;}
-   startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION),42);
+   pickPhoneFolder(42,null);
   }));
   try{
    JSONArray all=Store.pairs(this);
@@ -234,7 +235,7 @@ public final class MainActivity extends Activity {
      heading.setText(title+" / "+(expanded?"Hide controls":"Show controls"));
     });
     entry.addView(heading);
-    entry.addView(SahlTheme.label(this,"Phone to "+pair.getString("remoteName")+"\n"+(pair.optBoolean("unmetered")?"Unmetered network":"Any network")+(pair.optBoolean("charging")?" / Charging":"")+(pair.optBoolean("daily")||pair.optInt("scheduleMode")!=0?" / Scheduled":" / Manual"),14,SahlTheme.MUTED));
+    entry.addView(SahlTheme.label(this,directionLabel(pair)+" / "+pair.getString("remoteName")+"\n"+(pair.optBoolean("unmetered")?"Unmetered network":"Any network")+(pair.optBoolean("charging")?" / Charging":"")+(pair.optBoolean("daily")||pair.optInt("scheduleMode")!=0?" / Scheduled":" / Manual"),14,SahlTheme.MUTED));
     TextView owner=SahlTheme.label(this,"",14,SahlTheme.MUTED);
     entry.addView(owner);
     ownerLabels.put(owner,pair);
@@ -342,11 +343,13 @@ public final class MainActivity extends Activity {
    EditText exclude=new EditText(this);exclude.setHint("Exclusions, one pattern per line");exclude.setText(pair.optString("exclude"));form.addView(exclude);
    CheckBox wifi=new CheckBox(this);wifi.setText("Unmetered network only");wifi.setChecked(pair.optBoolean("unmetered",true));form.addView(wifi);
    CheckBox charging=new CheckBox(this);charging.setText("Only while charging");charging.setChecked(pair.optBoolean("charging"));form.addView(charging);
+   Spinner direction=addDirection(form,pair.optString("direction","upload"));
    ScheduleEditor schedule=new ScheduleEditor(this,form,pair);
    ScrollView scroll=new ScrollView(this);scroll.addView(form);
    AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Edit backup settings").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
    dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
     try{String title=name.getText().toString().trim();if(title.isEmpty()){name.setError("Enter a backup name");return;}
+     if(!applyDirection(pair,direction))return;
      pair.put("name",title).put("exclude",exclude.getText().toString()).put("unmetered",wifi.isChecked()).put("charging",charging.isChecked());
      long due=schedule.apply(pair);
      synchronized(BackupSchedule.class){
@@ -413,10 +416,73 @@ public final class MainActivity extends Activity {
  @Override protected void onActivityResult(int request,int result,Intent data){
   super.onActivityResult(request,result,data);
   if(request==43){saveSnapshotCopy(result,data);return;}
+  if(request==44){completeWriteGrant(result,data);return;}
   if(request==42&&result==RESULT_OK&&data!=null&&data.getData()!=null){
-   Uri uri=data.getData();try{getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);pendingLocal=uri.toString();selectAccount("Choose a OneDrive account",true,owner->chooseRemote("root","OneDrive",owner));}catch(Exception e){message("Persistent folder access was not granted.");}
+   Uri uri=data.getData();try{takeFolderGrant(data);pendingLocal=uri.toString();selectAccount("Choose a OneDrive account",true,owner->chooseRemote("root","OneDrive",owner));}catch(Exception e){message("Persistent folder access was not granted.");}
   }
  }
+ private void pickPhoneFolder(int request,Uri initial){
+  Intent pick=new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+   .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+  if(initial!=null)pick.putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI,initial);
+  startActivityForResult(pick,request);
+ }
+
+ private void takeFolderGrant(Intent data){
+  int flags=data.getFlags()&(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+  getContentResolver().takePersistableUriPermission(data.getData(),flags);
+ }
+
+ private void completeWriteGrant(int result,Intent data){
+  String tree=pendingWriteTree;
+  pendingWriteTree=null;
+  if(result!=RESULT_OK||data==null||data.getData()==null||tree==null)return;
+  try{
+   Uri original=Uri.parse(tree);
+   if(!original.equals(data.getData())){message("Select the original phone folder to keep this backup pair.");return;}
+   takeFolderGrant(data);
+   if(FolderSync.writable(getContentResolver(),original))message("Write access granted. Save the sync mode in backup settings.");
+   else message("Android did not grant write access to this folder.");
+  }catch(Exception error){message("Could not grant write access to this folder.");}
+ }
+
+ private Spinner addDirection(LinearLayout form,String saved){
+  form.addView(SahlTheme.label(this,"Sync mode",16,SahlTheme.TEXT));
+  Spinner picker=new Spinner(this);
+  picker.setContentDescription("Sync mode");
+  ArrayAdapter<String> options=new ArrayAdapter<>(this,android.R.layout.simple_spinner_item,
+   new String[]{"Upload only (phone to OneDrive)","Download only (OneDrive to phone)","Two-way (newest modified wins)"});
+  options.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+  picker.setAdapter(options);
+  picker.setSelection("newest".equals(saved)?2:"download".equals(saved)?1:0);
+  form.addView(picker);
+  return picker;
+ }
+
+ private String directionLabel(JSONObject pair){
+  switch(SyncDirection.from(pair.optString("direction"))){
+   case DOWNLOAD:return "OneDrive to phone";
+   case NEWEST:return "Two-way (newest wins)";
+   default:return "Phone to OneDrive";
+  }
+ }
+
+ private boolean applyDirection(JSONObject pair,Spinner direction)throws Exception{
+  int selected=direction.getSelectedItemPosition();
+  Uri tree=Uri.parse(pair.getString("local"));
+  if(selected!=0&&!FolderSync.writable(getContentResolver(),tree)){
+   new AlertDialog.Builder(this).setTitle("Allow writing to the phone folder?")
+    .setMessage("Select the same phone folder to allow Sahl Sync to save files from OneDrive.")
+    .setNegativeButton("Cancel",null).setPositiveButton("Select folder",(dialog,button)->{
+     pendingWriteTree=tree.toString();
+     pickPhoneFolder(44,tree);
+    }).show();
+   return false;
+  }
+  pair.put("direction",selected==2?"newest":selected==1?"download":"upload");
+  return true;
+ }
+
  private void chooseRemote(String id,String name,IAccount owner){
   if(auth==null)return;status.setText("Loading OneDrive folders...");
   io.execute(()->{
@@ -435,12 +501,14 @@ public final class MainActivity extends Activity {
   EditText exclude=new EditText(this);exclude.setHint("Exclusions, one pattern per line: *.tmp");form.addView(exclude);
   CheckBox wifi=new CheckBox(this);wifi.setText("Unmetered network only");wifi.setChecked(true);form.addView(wifi);
   CheckBox charging=new CheckBox(this);charging.setText("Only while charging");form.addView(charging);
+  Spinner direction=addDirection(form,"upload");
   ScheduleEditor schedule=new ScheduleEditor(this,form,new JSONObject());
   ScrollView scroll=new ScrollView(this);scroll.addView(form);
   AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Create folder backup").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
   dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
    try{String title=name.getText().toString().trim();if(title.isEmpty()){name.setError("Enter a backup name");return;}
     JSONObject pair=new JSONObject().put("id",UUID.randomUUID().toString()).put("name",title).put("local",pendingLocal).put("remote",remote).put("remoteName",remoteName).put("account",owner.getId()).put("accountLabel",accountLabel(owner)).put("exclude",exclude.getText().toString()).put("unmetered",wifi.isChecked()).put("charging",charging.isChecked());
+    if(!applyDirection(pair,direction))return;
     long due=schedule.apply(pair);
     synchronized(BackupSchedule.class){Store.add(this,pair);if(due>0)BackupSchedule.enqueue(this,pair,due);}dialog.dismiss();draw();loadAccount();if(due>0)offerBackgroundSetup();
    }catch(IllegalArgumentException e){message(e.getMessage());}catch(Exception e){message("Could not save folder backup.");}
@@ -510,6 +578,6 @@ public final class MainActivity extends Activity {
   });
  }
  private void message(String text){if(!isFinishing()&&!isDestroyed())new AlertDialog.Builder(this).setMessage(text).setPositiveButton("OK",null).show();}
- @Override protected void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);out.putString("local",pendingLocal);if(pendingSnapshot!=null)out.putString("snapshot",pendingSnapshot.getAbsolutePath());out.putString("snapshotName",pendingSnapshotName);}
+ @Override protected void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);out.putString("local",pendingLocal);out.putString("writePair",pendingWriteTree);if(pendingSnapshot!=null)out.putString("snapshot",pendingSnapshot.getAbsolutePath());out.putString("snapshotName",pendingSnapshotName);}
  @Override protected void onDestroy(){for(Runnable remove:unwatch)remove.run();unwatch.clear();Store.prefs(this).unregisterOnSharedPreferenceChangeListener(historyListener);io.shutdown();super.onDestroy();}
 }
