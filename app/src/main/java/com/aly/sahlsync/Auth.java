@@ -29,7 +29,9 @@ final class Auth {
  static IAuthenticationResult token(IMultipleAccountPublicClientApplication app,String accountId) throws Exception {
   IAccount account=app.getAccount(accountId);
   if(account==null||!accountId.equals(account.getId()))throw new SignInRequired();
-  return app.acquireTokenSilent(new AcquireTokenSilentParameters.Builder().withScopes(Arrays.asList(SCOPES))
+  IAuthenticationResult result=app.acquireTokenSilent(new AcquireTokenSilentParameters.Builder().withScopes(Arrays.asList(SCOPES))
    .forAccount(account).fromAuthority(account.getAuthority()).build());
+  if(result.getAccount()==null||!accountId.equals(result.getAccount().getId()))throw new SignInRequired();
+  return result;
  }
 }
