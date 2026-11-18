@@ -33,10 +33,54 @@ public final class MainActivity extends Activity {
   if(saved!=null){String cached=saved.getString("snapshot");if(cached!=null){java.io.File file=new java.io.File(cached);try{if(file.getCanonicalFile().getParentFile().equals(getCacheDir().getCanonicalFile()))pendingSnapshot=file;}catch(java.io.IOException ignored){}}pendingSnapshotName=saved.getString("snapshotName");}
   Store.prefs(this).registerOnSharedPreferenceChangeListener(historyListener);
   draw();
-  if(saved==null&&!Store.prefs(this).getBoolean("setupSeen",false))showBackgroundSetup();
+  if(saved==null){
+   if(!Store.prefs(this).getBoolean("setupSeen",false))showBackgroundSetup();
+   else offerBackgroundSetupForExistingSchedules();
+  }
   if(Auth.configured())io.execute(()->{try{ISingleAccountPublicClientApplication app=Auth.open(getApplicationContext());runOnUiThread(()->{auth=app;loadAccount();});}catch(Exception e){runOnUiThread(()->{status.setText("Could not initialize Microsoft sign-in. Reopen the app to retry.");});}});
  }
  @Override protected void onResume(){super.onResume();BackupNotifications.refreshStatus(this);if(auth!=null)loadAccount();}
+ private void offerBackgroundSetupForExistingSchedules(){
+  if(backgroundAllowed()||Store.prefs(this).getBoolean("backgroundSetupOffered",false))return;
+  try{
+   JSONArray pairs=Store.pairs(this);
+   for(int index=0;index<pairs.length();index++){
+    JSONObject pair=pairs.getJSONObject(index);
+    if(pair.optBoolean("daily")||pair.optInt("scheduleMode")>=2
+     ||(pair.optInt("scheduleMode")==1&&pair.optLong("scheduleDate")>System.currentTimeMillis())){
+     offerBackgroundSetup();
+     break;
+    }
+   }
+  }catch(Exception ignored){/* draw() reports unreadable folder settings. */}
+ }
+
+ private boolean backgroundAllowed(){
+  return getSystemService(android.os.PowerManager.class).isIgnoringBatteryOptimizations(getPackageName());
+ }
+
+ private void offerBackgroundSetup(){
+  if(backgroundAllowed())return;
+  Store.prefs(this).edit().putBoolean("backgroundSetupOffered",true).apply();
+  new AlertDialog.Builder(this).setTitle("Allow background backups?")
+   .setMessage("Some phones block OneDrive connections when Sahl Sync is in the background. Allow background backups to help your schedules run. This setting applies to Sahl Sync only.")
+   .setNegativeButton("Not now",null)
+   .setPositiveButton("Continue",(dialog,button)->openBackgroundPermission()).show();
+ }
+
+ private void openBackgroundPermission(){
+  try{
+   startActivity(new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+    Uri.fromParts("package",getPackageName(),null)));
+  }catch(ActivityNotFoundException|SecurityException unavailable){
+   try{
+    startActivity(new Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+   }catch(ActivityNotFoundException|SecurityException ignored){
+    message("In Android Settings, search for Battery optimization and allow Sahl Sync to run in the background.");
+   }
+  }
+ }
+
  private void showBackgroundSetup(){
   Store.prefs(this).edit().putBoolean("setupSeen",true).apply();
   LinearLayout form=new LinearLayout(this);
@@ -52,7 +96,15 @@ public final class MainActivity extends Activity {
   pinned.setText("Pin a shortcut to Sahl Sync");
   pinned.setChecked(Store.prefs(this).getBoolean("pinnedStatus",false));
   form.addView(pinned);
-  form.addView(SahlTheme.label(this,"If Android delays scheduled backups, check your phone's background app settings. On Honor, look for App launch and Run in background.",14,SahlTheme.MUTED));
+  if(backgroundAllowed()){
+   form.addView(SahlTheme.label(this,"Battery optimization exemption is enabled.",14,SahlTheme.MUTED));
+  }else{
+   form.addView(SahlTheme.button(this,"Allow background backups",()->{
+    saveNotificationOptions(results.isChecked(),pinned.isChecked());
+    openBackgroundPermission();
+   }));
+  }
+  form.addView(SahlTheme.label(this,"If backups are still delayed, check your phone's background app settings.",14,SahlTheme.MUTED));
   ScrollView scroll=new ScrollView(this);
   scroll.addView(form);
   new AlertDialog.Builder(this).setTitle("Background & notifications").setView(scroll)
@@ -266,7 +318,7 @@ public final class MainActivity extends Activity {
       if(due>0)BackupSchedule.enqueue(this,pair,due);
      }
 
-     dialog.dismiss();draw();loadAccount();
+     dialog.dismiss();draw();loadAccount();if(due>0)offerBackgroundSetup();
     }catch(IllegalArgumentException e){message(e.getMessage());}catch(Exception e){message("Could not save backup settings.");}
    }));dialog.show();
   }catch(Exception e){message("Could not load backup settings.");}
@@ -334,7 +386,7 @@ public final class MainActivity extends Activity {
    try{String title=name.getText().toString().trim();if(title.isEmpty()){name.setError("Enter a backup name");return;}
     JSONObject pair=new JSONObject().put("id",UUID.randomUUID().toString()).put("name",title).put("local",pendingLocal).put("remote",remote).put("remoteName",remoteName).put("account",owner).put("exclude",exclude.getText().toString()).put("unmetered",wifi.isChecked()).put("charging",charging.isChecked());
     long due=schedule.apply(pair);
-    synchronized(BackupSchedule.class){Store.add(this,pair);if(due>0)BackupSchedule.enqueue(this,pair,due);}dialog.dismiss();draw();loadAccount();
+    synchronized(BackupSchedule.class){Store.add(this,pair);if(due>0)BackupSchedule.enqueue(this,pair,due);}dialog.dismiss();draw();loadAccount();if(due>0)offerBackgroundSetup();
    }catch(IllegalArgumentException e){message(e.getMessage());}catch(Exception e){message("Could not save folder backup.");}
   }));dialog.show();
  }
