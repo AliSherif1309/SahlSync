@@ -18,6 +18,10 @@ final class OneDriveBackup implements VersionedBackup.Backend {
  public VersionedBackup.Item find(String filename)throws Exception{
   try{return item(graph.item(parent,filename));}catch(Graph.HttpError e){if(e.status==404)return null;throw e;}
  }
+ public void reportConflict(VersionedBackup.Item remote,long localSize){
+  Store.history(context,pair.optString("id"),path+": OneDrive returned an existing item in "+pair.optString("remoteName")
+   +" (cloud "+remote.size+" bytes; phone "+localSize+" bytes).");
+ }
  public String hash(VersionedBackup.Item item)throws Exception{return graph.contentHash(item.id);}
  public VersionedBackup.Item create(String filename,File source)throws Exception{return item(graph.upload(parent,filename,source));}
  public VersionedBackup.Item update(VersionedBackup.Item expected,File source)throws Exception{return item(graph.updateFile(expected.id,expected.tag,source));}

@@ -15,6 +15,7 @@ final class VersionedBackup {
  }
  interface Backend {
   Item find(String name)throws Exception;
+  default void reportConflict(Item remote,long localSize) throws Exception {}
   String hash(Item item)throws Exception;
   Item create(String name,File source)throws Exception;
   // Must store and verify an independent immutable copy before returning.
@@ -33,7 +34,10 @@ final class VersionedBackup {
   String remoteHash=known!=null&&known.id.equals(remote.id)&&known.tag!=null&&!known.tag.isEmpty()&&known.tag.equals(remote.tag)&&known.size==remote.size
    ?known.hash:backend.hash(remote);
   if(remote.size==source.length()&&localHash.equals(remoteHash))return result(Outcome.UNCHANGED,remote,localHash);
-  if(known==null||!known.id.equals(remote.id)||!known.hash.equals(remoteHash))return new Result(Outcome.CONFLICT,null);
+  if(known==null||!known.id.equals(remote.id)||!known.hash.equals(remoteHash)){
+   backend.reportConflict(remote,source.length());
+   return new Result(Outcome.CONFLICT,null);
+  }
   if(remote.tag==null||remote.tag.isEmpty())throw new IOException("Cannot safely update a file without its current tag");
   backend.archive(remote,remoteHash);
   Item updated=backend.update(remote,source);

@@ -9,11 +9,13 @@ import org.json.*;
 final class UploadSession {
  private static final int CHUNK=5*1024*1024;
  private final Graph graph;
+ private final Context context;
  private final SharedPreferences checkpoints;
  private final String pair;
 
  UploadSession(Graph graph,Context context,String pair){
   this.graph=graph;
+  this.context=context;
   this.pair=pair;
   checkpoints=context.getSharedPreferences("upload-checkpoints",Context.MODE_PRIVATE);
  }
@@ -31,7 +33,10 @@ final class UploadSession {
   String url=identity.equals(state.optString("identity"))?state.optString("url"):"";
   long offset=0;
   if(!url.isEmpty()){
-   try{offset=nextOffset(request(url,null,0,0,length),length);}
+   try{
+    offset=nextOffset(request(url,null,0,0,length),length);
+    Store.history(context,pair,"OneDrive upload checkpoint: "+offset+" of "+length+" bytes already accepted.");
+   }
    catch(Graph.HttpError error){
     if(error.status!=404&&error.status!=410)throw error;
     url="";
