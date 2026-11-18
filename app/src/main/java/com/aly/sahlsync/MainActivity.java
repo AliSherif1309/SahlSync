@@ -59,7 +59,7 @@ public final class MainActivity extends Activity {
   connectButton=SahlTheme.button(this,"Connect OneDrive",this::connect);connect.addView(connectButton);
   disconnectButton=SahlTheme.button(this,"Disconnect",this::disconnect);connect.addView(disconnectButton);updateAccountButtons();
   LinearLayout pairs=card("Folder backups");
-  pairs.addView(SahlTheme.label(this,"Upload-only. One current file keeps its original name. Before an update, Sahl Sync stores a verified older copy in its history folder. No automatic history deletion. Alpha limit: 20 MiB per file and 5,000 items per run.",15,SahlTheme.MUTED));
+  pairs.addView(SahlTheme.label(this,"Upload-only. One current file keeps its original name. Before an update, Sahl Sync stores a verified older copy in its history folder. No automatic history deletion. Alpha limit: 128 MiB per file and 5,000 items per run.",15,SahlTheme.MUTED));
   pairs.addView(SahlTheme.button(this,"Add folder backup",()->{
    if(account==null){message("Connect OneDrive first.");return;}
    startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION),42);

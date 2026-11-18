@@ -37,6 +37,7 @@ public final class BackupWorker extends Worker {
     DocumentFile local=DocumentFile.fromTreeUri(c,Uri.parse(pair.getString("local")));
     if(local==null||!local.isDirectory()||!local.canRead())throw new IOException("Local folder permission is unavailable; select it again");
     Graph graph=new Graph(auth.getAccessToken());
+    graph.enableResumableUploads(c,getInputData().getString("pair"));
     walk(c,graph,local.getUri(),pair.getString("remote"),"",pair,0);
     BackupCancellation.check();
     Store.history(c,getInputData().getString("pair"),"Backup finished: "+uploaded+" uploaded, "+unchanged+" unchanged, "+excluded+" excluded, "+conflicts+" conflicts.");
@@ -46,6 +47,12 @@ public final class BackupWorker extends Worker {
     boolean retry=e.status==429||e.status>=500;
     Store.history(c,getInputData().getString("pair"),current+": "+(retry&&getRunAttemptCount()<3?"OneDrive is busy. Automatic retry queued.":"OneDrive HTTP "+e.status+". Check connection, sign-in, quota and destination access; then tap Back up now to retry."));
     return retry&&getRunAttemptCount()<3?Result.retry():Result.failure();
+   }catch(UploadSession.ConnectionFailure e){
+    boolean retry=!isStopped()&&getRunAttemptCount()<3;
+    Store.history(c,getInputData().getString("pair"),current+": "+(retry
+     ?"Upload interrupted. Automatic retry queued."
+     :"Upload interrupted. Tap Back up now to retry."));
+    return retry?Result.retry():Result.failure();
    }catch(Exception e){
     Store.history(c,getInputData().getString("pair"),isStopped()?"Backup stopped; completed uploads are kept.":current+": stopped after "+uploaded+" uploads. "+failureHint(e)+" Tap Back up now to retry; completed files are kept.");
     return Result.failure();
@@ -56,7 +63,7 @@ public final class BackupWorker extends Worker {
   if(e instanceof IllegalArgumentException)return "Check unsupported file names.";
   if(e instanceof com.microsoft.identity.client.exception.MsalException)return "Connect OneDrive again.";
   if(e instanceof java.net.SocketTimeoutException||e instanceof java.net.UnknownHostException)return "Check your network connection.";
-  return "Check folder access, free storage and the 20 MiB file limit.";
+  return "Check folder access, free storage and the 128 MiB file limit.";
  }
  private void walk(Context c,Graph graph,Uri source,String remote,String path,JSONObject pair,int depth)throws Exception{
   if(depth>32||!seen.add(source.toString()))throw new IOException("Folder nesting limit reached");
