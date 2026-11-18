@@ -49,7 +49,7 @@ public final class MainActivity extends Activity {
   results.setChecked(Store.prefs(this).getBoolean("backupResults",true));
   form.addView(results);
   CheckBox pinned=new CheckBox(this);
-  pinned.setText("Pin Sahl Sync in the notification bar");
+  pinned.setText("Pin a shortcut to Sahl Sync");
   pinned.setChecked(Store.prefs(this).getBoolean("pinnedStatus",false));
   form.addView(pinned);
   form.addView(SahlTheme.label(this,"If Android delays scheduled backups, check your phone's background app settings. On Honor, look for App launch and Run in background.",14,SahlTheme.MUTED));
