@@ -16,8 +16,9 @@ import java.util.concurrent.*;
 
 public final class MainActivity extends Activity {
  private final ExecutorService io=Executors.newSingleThreadExecutor();
- private ISingleAccountPublicClientApplication auth;
- private IAccount account;
+ private IMultipleAccountPublicClientApplication auth;
+ private List<IAccount> accounts=Collections.emptyList();
+ private final Map<TextView,JSONObject> ownerLabels=new LinkedHashMap<>();
  private LinearLayout content;
  private TextView status,history;
  private Button connectButton,disconnectButton;
@@ -37,7 +38,7 @@ public final class MainActivity extends Activity {
    if(!Store.prefs(this).getBoolean("setupSeen",false))showBackgroundSetup();
    else offerBackgroundSetupForExistingSchedules();
   }
-  if(Auth.configured())io.execute(()->{try{ISingleAccountPublicClientApplication app=Auth.open(getApplicationContext());runOnUiThread(()->{auth=app;loadAccount();});}catch(Exception e){runOnUiThread(()->{status.setText("Could not initialize Microsoft sign-in. Reopen the app to retry.");});}});
+  if(Auth.configured())io.execute(()->{try{IMultipleAccountPublicClientApplication app=Auth.open(getApplicationContext());runOnUiThread(()->{auth=app;loadAccount();});}catch(Exception e){runOnUiThread(()->{status.setText("Could not initialize Microsoft sign-in. Reopen the app to retry.");});}});
  }
  @Override protected void onResume(){super.onResume();BackupNotifications.refreshStatus(this);if(auth!=null)loadAccount();}
  private void offerBackgroundSetupForExistingSchedules(){
@@ -133,17 +134,48 @@ public final class MainActivity extends Activity {
   super.onRequestPermissionsResult(requestCode,permissions,results);
   if(requestCode==610)BackupNotifications.refreshStatus(this);
  }
- private void loadAccount(){auth.getCurrentAccountAsync(new ISingleAccountPublicClientApplication.CurrentAccountCallback(){
-  public void onAccountLoaded(IAccount a){account=a;status.setText(a==null?"Not connected to OneDrive":"Connected: "+a.getUsername());updateAccountButtons();}
-  public void onAccountChanged(IAccount prior,IAccount current){account=current;updateAccountButtons();}
-  public void onError(MsalException e){status.setText("Sign-in needs attention. Connect again.");account=null;updateAccountButtons();}
- });}
+ private void loadAccount(){
+  IMultipleAccountPublicClientApplication session=auth;
+  if(session==null)return;
+  io.execute(()->{
+   try{
+    List<IAccount> loaded=session.getAccounts();
+    runOnUiThread(()->{
+     if(isDestroyed()||isFinishing())return;
+     accounts=new ArrayList<>(loaded);
+     status.setText(accounts.isEmpty()?"No Microsoft accounts connected":accounts.size()+" connected Microsoft account"+(accounts.size()==1?"":"s"));
+     updateAccountButtons();
+    });
+   }catch(Exception e){runOnUiThread(()->{if(!isDestroyed())status.setText("Could not read Microsoft accounts. Try again.");});}
+  });
+ }
+
+ private IAccount connectedAccount(String id){
+  for(IAccount candidate:accounts)if(id.equals(candidate.getId()))return candidate;
+  return null;
+ }
+
+ private String accountLabel(IAccount account){
+  String username=account.getUsername();
+  return username==null||username.isEmpty()?"Microsoft account":username;
+ }
+
+ private void selectAccount(String title,boolean autoSelect,java.util.function.Consumer<IAccount> action){
+  List<IAccount> choices=new ArrayList<>(accounts);
+  if(choices.isEmpty()){message("Connect a Microsoft account first.");return;}
+  if(autoSelect&&choices.size()==1){action.accept(choices.get(0));return;}
+  String[] labels=new String[choices.size()];
+  for(int index=0;index<labels.length;index++)labels[index]=accountLabel(choices.get(index));
+  new AlertDialog.Builder(this).setTitle(title).setItems(labels,(dialog,index)->action.accept(choices.get(index)))
+   .setNegativeButton("Cancel",null).show();
+ }
  private LinearLayout card(String title){
   LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);int p=SahlTheme.dp(this,18);card.setPadding(p,p,p,p);card.setBackground(SahlTheme.rounded(this,SahlTheme.PANEL));
   LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=SahlTheme.dp(this,16);content.addView(card,lp);
   card.addView(SahlTheme.label(this,title,21,SahlTheme.TEXT));return card;
  }
  private void draw(){
+  ownerLabels.clear();
   for(Runnable remove:unwatch)remove.run();unwatch.clear();
   ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);
   scroll.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,new int[]{SahlTheme.TOP,SahlTheme.BOTTOM}));
@@ -152,14 +184,14 @@ public final class MainActivity extends Activity {
   content.addView(SahlTheme.label(this,"SAHL  /  SYNC",14,SahlTheme.GOLD));
   content.addView(SahlTheme.label(this,"Your folders. Backed up.",30,SahlTheme.TEXT));
   content.addView(SahlTheme.label(this,"OneDrive backup - Early preview",15,SahlTheme.MUTED));
-  LinearLayout connect=card("Microsoft account");status=SahlTheme.label(this,Auth.configured()?"Loading account...":"Microsoft sign-in setup is pending for this build.",16,SahlTheme.MUTED);connect.addView(status);
+  LinearLayout connect=card("Microsoft accounts");status=SahlTheme.label(this,Auth.configured()?"Loading account...":"Microsoft sign-in setup is pending for this build.",16,SahlTheme.MUTED);connect.addView(status);
   connectButton=SahlTheme.button(this,"Connect OneDrive",this::connect);connect.addView(connectButton);
-  disconnectButton=SahlTheme.button(this,"Disconnect",this::disconnect);connect.addView(disconnectButton);updateAccountButtons();
+  disconnectButton=SahlTheme.button(this,"Disconnect an account",this::disconnect);connect.addView(disconnectButton);updateAccountButtons();
   connect.addView(SahlTheme.button(this,"Background & notifications",this::showBackgroundSetup));
   LinearLayout pairs=card("Folder backups");
   pairs.addView(SahlTheme.label(this,"Upload-only. One current file keeps its original name. Before an update, Sahl Sync stores a verified older copy in its history folder. No automatic history deletion. Alpha limit: 128 MiB per file and 5,000 items per run.",15,SahlTheme.MUTED));
   pairs.addView(SahlTheme.button(this,"Add folder backup",()->{
-   if(account==null){message("Connect OneDrive first.");return;}
+   if(accounts.isEmpty()){message("Connect OneDrive first.");return;}
    startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION),42);
   }));
   try{
@@ -203,6 +235,10 @@ public final class MainActivity extends Activity {
     });
     entry.addView(heading);
     entry.addView(SahlTheme.label(this,"Phone to "+pair.getString("remoteName")+"\n"+(pair.optBoolean("unmetered")?"Unmetered network":"Any network")+(pair.optBoolean("charging")?" / Charging":"")+(pair.optBoolean("daily")||pair.optInt("scheduleMode")!=0?" / Scheduled":" / Manual"),14,SahlTheme.MUTED));
+    TextView owner=SahlTheme.label(this,"",14,SahlTheme.MUTED);
+    entry.addView(owner);
+    ownerLabels.put(owner,pair);
+    updateOwnerLabel(owner,pair);
     TextView manual=SahlTheme.label(this,"",14,SahlTheme.MUTED),scheduled=SahlTheme.label(this,"",14,SahlTheme.MUTED);
     entry.addView(manual);entry.addView(scheduled);entry.addView(actions);
     Button backup=SahlTheme.button(this,"Back up now / Retry",()->BackupWorker.enqueue(this,pair,false));actions.addView(backup);
@@ -337,43 +373,63 @@ public final class MainActivity extends Activity {
   catch(Exception e){return "History is unavailable.";}
  }
  private void updateAccountButtons(){
-  if(connectButton==null)return;
-  connectButton.setEnabled(auth!=null&&account==null);connectButton.setText(!Auth.configured()?"OneDrive setup required":auth==null?"Preparing OneDrive...":account==null?"Connect OneDrive":"Connected");
-  disconnectButton.setEnabled(auth!=null&&account!=null);
+  connectButton.setEnabled(auth!=null);
+  connectButton.setText(!Auth.configured()?"OneDrive setup required":auth==null?"Preparing OneDrive...":"Add Microsoft account");
+  disconnectButton.setEnabled(auth!=null&&!accounts.isEmpty());
+  for(Map.Entry<TextView,JSONObject> entry:ownerLabels.entrySet())updateOwnerLabel(entry.getKey(),entry.getValue());
  }
+
+ private void updateOwnerLabel(TextView label,JSONObject pair){
+  IAccount owner=connectedAccount(pair.optString("account"));
+  label.setText(owner==null?"Account: "+pair.optString("accountLabel","Microsoft account")+" (connect to access)"
+   :"Account: "+accountLabel(owner));
+ }
+
  private void connect(){
-  if(!Auth.configured()){message("This early build needs its Microsoft app registration configured before sign-in can work. No Microsoft password is collected by Sahl Sync.");return;}
-  if(auth==null){message("Sign-in is still loading.");return;}
-  AuthenticationCallback callback=new AuthenticationCallback(){public void onSuccess(IAuthenticationResult r){account=r.getAccount();loadAccount();}public void onError(MsalException e){message("Microsoft sign-in did not complete. Retry Connect OneDrive.");}public void onCancel(){message("Sign-in cancelled.");}};
-  auth.acquireToken(new AcquireTokenParameters.Builder().startAuthorizationFromActivity(this).withScopes(Arrays.asList(Auth.SCOPES)).withCallback(callback).build());
+  if(auth==null)return;
+  AuthenticationCallback callback=new AuthenticationCallback(){
+   public void onSuccess(IAuthenticationResult result){loadAccount();}
+   public void onError(MsalException error){message("Microsoft sign-in did not complete. Try adding the account again.");}
+   public void onCancel(){}
+  };
+  auth.acquireToken(new AcquireTokenParameters.Builder().startAuthorizationFromActivity(this)
+   .withScopes(Arrays.asList(Auth.SCOPES)).withPrompt(Prompt.SELECT_ACCOUNT).withCallback(callback).build());
  }
+
  private void disconnect(){
   if(auth==null)return;
-  new AlertDialog.Builder(this).setTitle("Disconnect OneDrive?").setMessage("Stop queued backups and remove the saved Microsoft session. Existing files remain in OneDrive.").setNegativeButton("Cancel",null).setPositiveButton("Disconnect",(d,w)->{
-   WorkManager.getInstance(this).cancelAllWork();
-   io.execute(()->{try{synchronized(BackupWorker.class){auth.signOut();}runOnUiThread(()->{account=null;loadAccount();});}catch(Exception e){runOnUiThread(()->message("Could not disconnect. Try again."));}});
-  }).show();
+  selectAccount("Disconnect which account?",false,owner->new AlertDialog.Builder(this)
+   .setTitle("Disconnect Microsoft account?")
+   .setMessage("Disconnect "+accountLabel(owner)+"? Backups for this account will require reconnecting it. Your folder settings stay saved.")
+   .setNegativeButton("Cancel",null).setPositiveButton("Disconnect",(dialog,button)->io.execute(()->{
+    try{
+     synchronized(BackupWorker.class){
+      if(!auth.removeAccount(owner))throw new java.io.IOException("Account was not removed");
+     }
+     runOnUiThread(this::loadAccount);
+    }catch(Exception error){runOnUiThread(()->message("Could not disconnect this account. Try again."));}
+   })).show());
  }
  @Override protected void onActivityResult(int request,int result,Intent data){
   super.onActivityResult(request,result,data);
   if(request==43){saveSnapshotCopy(result,data);return;}
   if(request==42&&result==RESULT_OK&&data!=null&&data.getData()!=null){
-   Uri uri=data.getData();try{getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);pendingLocal=uri.toString();chooseRemote("root","OneDrive");}catch(Exception e){message("Persistent folder access was not granted.");}
+   Uri uri=data.getData();try{getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);pendingLocal=uri.toString();selectAccount("Choose a OneDrive account",true,owner->chooseRemote("root","OneDrive",owner));}catch(Exception e){message("Persistent folder access was not granted.");}
   }
  }
- private void chooseRemote(String id,String name){
-  if(auth==null||account==null)return;status.setText("Loading OneDrive folders...");
+ private void chooseRemote(String id,String name,IAccount owner){
+  if(auth==null)return;status.setText("Loading OneDrive folders...");
   io.execute(()->{
    try{
-    IAuthenticationResult token=Auth.token(auth);Graph graph=new Graph(token.getAccessToken());
+    IAuthenticationResult token=Auth.token(auth,owner.getId());Graph graph=new Graph(token.getAccessToken());
     JSONObject parent=graph.json("GET","/me/drive/"+(id.equals("root")?"root":"items/"+Uri.encode(id)),null);
     JSONArray folders=graph.folders(parent.getString("id"));
     List<String> options=new ArrayList<>();options.add("Use this folder");options.add("Back to OneDrive root");for(int i=0;i<folders.length();i++)options.add(folders.getJSONObject(i).getString("name"));
-    runOnUiThread(()->{loadAccount();new AlertDialog.Builder(this).setTitle(name).setItems(options.toArray(new String[0]),(d,index)->{try{if(index==0)configurePair(parent.getString("id"),name,token.getAccount().getId());else if(index==1)chooseRemote("root","OneDrive");else{JSONObject folder=folders.getJSONObject(index-2);chooseRemote(folder.getString("id"),folder.getString("name"));}}catch(Exception e){message("Could not select folder.");}}).setNegativeButton("Cancel",null).show();});
+    runOnUiThread(()->{loadAccount();new AlertDialog.Builder(this).setTitle(name).setItems(options.toArray(new String[0]),(d,index)->{try{if(index==0)configurePair(parent.getString("id"),name,owner);else if(index==1)chooseRemote("root","OneDrive",owner);else{JSONObject folder=folders.getJSONObject(index-2);chooseRemote(folder.getString("id"),folder.getString("name"),owner);}}catch(Exception e){message("Could not select folder.");}}).setNegativeButton("Cancel",null).show();});
    }catch(Exception e){runOnUiThread(()->{loadAccount();message("Could not load OneDrive folders. Check connection and account permission.");});}
   });
  }
- private void configurePair(String remote,String remoteName,String owner){
+ private void configurePair(String remote,String remoteName,IAccount owner){
   LinearLayout form=new LinearLayout(this);form.setOrientation(LinearLayout.VERTICAL);int pad=SahlTheme.dp(this,20);form.setPadding(pad,pad,pad,pad);
   EditText name=new EditText(this);name.setHint("Backup name");name.setSingleLine(true);form.addView(name);
   EditText exclude=new EditText(this);exclude.setHint("Exclusions, one pattern per line: *.tmp");form.addView(exclude);
@@ -384,7 +440,7 @@ public final class MainActivity extends Activity {
   AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Create folder backup").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
   dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
    try{String title=name.getText().toString().trim();if(title.isEmpty()){name.setError("Enter a backup name");return;}
-    JSONObject pair=new JSONObject().put("id",UUID.randomUUID().toString()).put("name",title).put("local",pendingLocal).put("remote",remote).put("remoteName",remoteName).put("account",owner).put("exclude",exclude.getText().toString()).put("unmetered",wifi.isChecked()).put("charging",charging.isChecked());
+    JSONObject pair=new JSONObject().put("id",UUID.randomUUID().toString()).put("name",title).put("local",pendingLocal).put("remote",remote).put("remoteName",remoteName).put("account",owner.getId()).put("accountLabel",accountLabel(owner)).put("exclude",exclude.getText().toString()).put("unmetered",wifi.isChecked()).put("charging",charging.isChecked());
     long due=schedule.apply(pair);
     synchronized(BackupSchedule.class){Store.add(this,pair);if(due>0)BackupSchedule.enqueue(this,pair,due);}dialog.dismiss();draw();loadAccount();if(due>0)offerBackgroundSetup();
    }catch(IllegalArgumentException e){message(e.getMessage());}catch(Exception e){message("Could not save folder backup.");}
@@ -392,12 +448,11 @@ public final class MainActivity extends Activity {
  }
  private Graph graphForPair(JSONObject pair)throws Exception{
   if(auth==null)throw new java.io.IOException("Sign-in unavailable");
-  IAuthenticationResult token=Auth.token(auth);
-  if(!token.getAccount().getId().equals(pair.getString("account")))throw new java.io.IOException("Account changed");
+  IAuthenticationResult token=Auth.token(auth,pair.getString("account"));
   return new Graph(token.getAccessToken());
  }
  private void showVersionFiles(JSONObject pair){
-  if(account==null){message("Connect OneDrive first.");return;}
+  if(connectedAccount(pair.optString("account"))==null){message("Connect the Microsoft account for this folder first.");return;}
   try{
    JSONArray files=Store.files(this,pair.getString("id"));
    if(files.length()==0){message("Run this backup first. Version history stores the previous contents when a backed-up file changes.");return;}

@@ -56,7 +56,7 @@ public final class BackupWorker extends Worker {
      }else if(getInputData().getBoolean("legacyDaily",false)&&!pair.optBoolean("daily"))return Result.success();
     }
     folderName=pair.optString("name","Sahl Sync");
-    IAuthenticationResult auth=Auth.token(Auth.open(c));
+    IAuthenticationResult auth=Auth.token(Auth.open(c),pair.getString("account"));
     if(!auth.getAccount().getId().equals(pair.getString("account")))throw new Auth.SignInRequired();
     DocumentFile local=DocumentFile.fromTreeUri(c,Uri.parse(pair.getString("local")));
     if(local==null||!local.isDirectory()||!local.canRead())throw new IOException("Local folder permission is unavailable; select it again");
