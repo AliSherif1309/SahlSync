@@ -8,13 +8,16 @@ import org.json.*;
 
 final class UploadSession {
  private static final int CHUNK=5*1024*1024;
+ interface ProgressListener { void onProgress(long accepted,long total,boolean resumed); }
+ private final ProgressListener progress;
  private final Graph graph;
  private final Context context;
  private final SharedPreferences checkpoints;
  private final String pair;
 
- UploadSession(Graph graph,Context context,String pair){
+ UploadSession(Graph graph,Context context,String pair,ProgressListener progress){
   this.graph=graph;
+  this.progress=progress;
   this.context=context;
   this.pair=pair;
   checkpoints=context.getSharedPreferences("upload-checkpoints",Context.MODE_PRIVATE);
@@ -35,7 +38,7 @@ final class UploadSession {
   JSONObject checkpoint=new JSONObject().put("identity",path+"\n"+hash).put("url",url);
   if(!checkpoints.edit().putString(pair,checkpoint.toString()).commit())
    throw new IOException("Could not save upload checkpoint");
-  return send(url,file,0);
+  return send(url,file,0,false);
  }
 
  JSONObject resume(String path,File file,String hash)throws Exception{
@@ -52,11 +55,12 @@ final class UploadSession {
    return null;
   }
   Store.history(context,pair,"OneDrive upload checkpoint: "+offset+" of "+file.length()+" bytes already accepted.");
-  return send(url,file,offset);
+  return send(url,file,offset,offset>0);
  }
 
- private JSONObject send(String url,File file,long offset)throws Exception{
+ private JSONObject send(String url,File file,long offset,boolean resumed)throws Exception{
   long length=file.length();
+  progress.onProgress(offset,length,resumed);
   try(RandomAccessFile input=new RandomAccessFile(file,"r")){
    byte[] bytes=new byte[CHUNK];
    while(offset<length){
@@ -69,11 +73,13 @@ final class UploadSession {
      if(!response.has("file")||response.optLong("size",-1)!=length)
       throw new IOException("OneDrive returned an incomplete upload result");
      checkpoints.edit().remove(pair).apply();
+     progress.onProgress(length,length,resumed);
      return response;
     }
     long next=nextOffset(response,length);
     if(next<=offset)throw new IOException("Upload did not advance");
     offset=next;
+    progress.onProgress(offset,length,resumed);
    }
   }
   throw new IOException("Upload session did not return the completed file");

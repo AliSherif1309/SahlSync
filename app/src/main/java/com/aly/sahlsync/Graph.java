@@ -10,7 +10,7 @@ final class Graph {
  static final String ROOT="https://graph.microsoft.com/v1.0";
  private final String token;
  private UploadSession uploads;
- void enableResumableUploads(android.content.Context context,String pair){uploads=new UploadSession(this,context,pair);}
+ void enableResumableUploads(android.content.Context context,String pair,UploadSession.ProgressListener progress){uploads=new UploadSession(this,context,pair,progress);}
  Graph(String token){this.token=token;}
  static final class HttpError extends IOException {
   final int status;
