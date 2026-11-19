@@ -6,6 +6,7 @@
  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
  <!-- Messages & apps backup (replaces SMS Import/Export and App List Backup) -->
+ <uses-feature android:name="android.hardware.telephony" android:required="false" />
  <uses-permission android:name="android.permission.READ_SMS" />
  <uses-permission android:name="android.permission.RECEIVE_SMS" />
  <uses-permission android:name="android.permission.RECEIVE_MMS" />
