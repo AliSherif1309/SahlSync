@@ -110,9 +110,10 @@ public final class LanActivity extends Activity {
   if(request!=CHOOSE_FOLDER||result!=RESULT_OK||data==null||data.getData()==null)return;
   try{
    Uri uri=data.getData();
-   int grants=data.getFlags()&(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-   if((grants&Intent.FLAG_GRANT_WRITE_URI_PERMISSION)==0)throw new SecurityException();
-   getContentResolver().takePersistableUriPermission(uri,grants);
+   int required=Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
+   if((data.getFlags()&required)!=required)throw new SecurityException();
+   getContentResolver().takePersistableUriPermission(uri,
+    Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
    if(!uri.toString().equals(settings.getString("tree","")))settings.edit().putString("tree",uri.toString())
     .remove("baseline").remove("result").apply();
    refresh();
