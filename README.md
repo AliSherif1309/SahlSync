@@ -25,6 +25,10 @@ Download **SahlSyncPC.exe** from Releases, add folders, select **Start sharing**
 
 **Edit backup settings** can change the phone folder and the OneDrive folder. After a change the next sync compares both folders fresh and deletes nothing on that run.
 
+## Arabic and the Thmanyah font
+
+The app has an Arabic interface (Settings > Language). The Thmanyah font licence allows it inside apps but forbids sharing the font files, so this public repository holds only an encrypted copy in `fonts-locked/` (same method as Sahl TV). Release builds unlock it with the `FONT_KEY` repository secret and pack it scrambled into the app. Builds without the secret use the phone's normal font.
+
 ## Build from source
 
 Use JDK 17, Android SDK 36 and Gradle 9.5.0.

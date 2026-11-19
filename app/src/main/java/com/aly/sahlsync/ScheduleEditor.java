@@ -26,7 +26,7 @@ final class ScheduleEditor {
   mode=new Spinner(activity);
   mode.setContentDescription("Backup schedule");
   ArrayAdapter<String> options=new ArrayAdapter<>(activity,android.R.layout.simple_spinner_item,
-   new String[]{"Manual only","Once on a date","Every day","Selected weekdays","Every hour","Every 6 hours","Every 15 minutes"});
+   Tr.all(activity,new String[]{"Manual only","Once on a date","Every day","Selected weekdays","Every hour","Every 6 hours","Every 15 minutes"}));
   options.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
   mode.setAdapter(options);
   form.addView(SahlTheme.label(activity,"Backup schedule",16,SahlTheme.TEXT));

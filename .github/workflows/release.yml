@@ -63,6 +63,11 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.5.0'
+      - name: Thmanyah font (unlocked here, packed scrambled; font files are never published)
+        if: steps.version.outputs.publish == 'true'
+        env:
+          FONT_KEY: ${{ secrets.FONT_KEY }}
+        run: python3 tools/pack_fonts.py
       - name: Test, build and sign the OneDrive APK
         if: steps.version.outputs.publish == 'true'
         env:

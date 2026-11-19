@@ -1,3 +1,8 @@
+## 1.1.0
+- Arabic interface (Settings > Language: Automatic, English, العربية) with right-to-left layout and the Thmanyah Sans font.
+- Deleting a whole folder now syncs everywhere: OneDrive ↔ phone (files kept in Version history) and phone ↔ PC (empty folders removed on both sides).
+- PC app lives in the system tray: closing the window keeps sharing; tray menu to open, start/stop sharing and quit.
+
 ## 1.0.0
 - First stable release.
 - Wi-Fi sync with your PC: deletion sync (with recovery copies on both sides), background Auto sync, and the phone finds the PC automatically when its address changes.
