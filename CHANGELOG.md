@@ -1,3 +1,7 @@
+## 1.1.1
+- Remove a folder from Sahl Sync (OneDrive and PC folders) without deleting any files.
+- Wi-Fi sync shows live progress: a progress bar for files, MB counter for big files, the file being checked, and a Stop button.
+
 ## 1.1.0
 - Arabic interface (Settings > Language: Automatic, English, العربية) with right-to-left layout and the Thmanyah Sans font.
 - Deleting a whole folder now syncs everywhere: OneDrive ↔ phone (files kept in Version history) and phone ↔ PC (empty folders removed on both sides).

@@ -71,6 +71,12 @@ final class LanPairs {
  }
 
  String activeId(){return settings.getString("activeFolderPair","");}
+ void remove(String id)throws JSONException{
+  List<Pair> pairs=list();
+  pairs.removeIf(p->p.id.equals(id));
+  save(pairs);
+  if(id.equals(activeId()))settings.edit().remove("activeFolderPair").apply();
+ }
  void select(String id){settings.edit().putString("activeFolderPair",id).apply();}
 
  private void save(List<Pair> pairs)throws JSONException{

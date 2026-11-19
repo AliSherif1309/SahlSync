@@ -14,7 +14,7 @@ final class Tr {
  private static final String[][] PREFIX={
   {"Folder pair: ","المجلد: "},{"Phone folder: ","مجلد الهاتف: "},{"Direction: ","الاتجاه: "},{"Auto sync: ","مزامنة تلقائية: "},
   {"Last completed sync: ","آخر مزامنة: "},{"Installed version: ","الإصدار المثبت: "},{"You are up to date. Installed version: ","لديك أحدث إصدار: "},
-  {"Account: ","الحساب: "},{"Schedule: ","الجدول: "},{"Manual: ","يدوي: "},{"Next: ","التالي: "},{"Date: ","التاريخ: "},{"Time: ","الوقت: "},
+  {"Account: ","الحساب: "},{"Checking phone files… ","جارٍ فحص ملفات الهاتف… "},{"Schedule: ","الجدول: "},{"Manual: ","يدوي: "},{"Next: ","التالي: "},{"Date: ","التاريخ: "},{"Time: ","الوقت: "},
   {"Daily: ","يوميًا: "},{"Running - ","تعمل الآن - "},{"Files checked so far: ","الملفات التي فُحصت: "},{"Change OneDrive folder (","تغيير مجلد OneDrive ("},
   {"OneDrive folder changed to ","تم تغيير مجلد OneDrive إلى "},{"Disconnect ","فصل "},{"Open this release in a browser: ","افتح هذا الإصدار في المتصفح: "},
  };
@@ -70,7 +70,10 @@ final class Tr {
    "Off","متوقفة","Phone → PC","الهاتف ← الكمبيوتر","PC → Phone","الكمبيوتر ← الهاتف",
    "Scan the QR shown in Sahl Sync on your PC","امسح رمز QR الظاهر في سهل للمزامنة على الكمبيوتر",
    "Looking for your PC on Wi-Fi…","جارٍ البحث عن الكمبيوتر على الشبكة…","Checking phone files…","جارٍ فحص ملفات الهاتف…","Checking PC files…","جارٍ فحص ملفات الكمبيوتر…",
-   "Language","اللغة","Automatic (phone language)","تلقائي (لغة الهاتف)",
+   "Language","اللغة","Remove this folder","إزالة هذا المجلد","Remove this folder?","إزالة هذا المجلد؟","Remove","إزالة",
+   "Sahl Sync stops syncing it. Your files on the phone and in OneDrive are not deleted.","سيتوقف سهل عن مزامنته. ملفاتك على الهاتف وفي OneDrive لن تُحذف.",
+   "Sahl Sync stops syncing it with your PC. Your files on the phone and the PC are not deleted.","سيتوقف سهل عن مزامنته مع الكمبيوتر. ملفاتك على الهاتف والكمبيوتر لن تُحذف.","Starting…","جارٍ البدء…","Stopping after the current step…","جارٍ الإيقاف بعد الخطوة الحالية…",
+   "Stopped. The next sync continues where it left off.","تم الإيقاف. المزامنة القادمة تكمل من حيث توقفت.","Automatic (phone language)","تلقائي (لغة الهاتف)",
    "Could not save options.","تعذّر حفظ الخيارات.","Could not load Wi-Fi folder pairs.","تعذّر تحميل المجلدات.",
    "Enter the full pairing code shown on your PC.","أدخل رمز الربط كاملًا كما يظهر على الكمبيوتر.","Could not verify the PC. Check Wi-Fi and the pairing code.","تعذّر التحقق من الكمبيوتر. تحقق من الشبكة ورمز الربط.",
   };

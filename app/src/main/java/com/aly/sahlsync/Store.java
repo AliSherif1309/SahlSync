@@ -17,6 +17,12 @@ final class Store {
   if(!found)throw new java.io.IOException("Folder pair not found");
   if(!prefs(c).edit().putString("pairs",all.toString()).commit())throw new java.io.IOException("Could not save settings");
  }
+ static synchronized void remove(Context c,String id)throws Exception{
+  JSONArray all=pairs(c),kept=new JSONArray();
+  for(int i=0;i<all.length();i++)if(!all.getJSONObject(i).getString("id").equals(id))kept.put(all.get(i));
+  if(!prefs(c).edit().putString("pairs",kept.toString()).remove("history-"+id).commit())throw new java.io.IOException("Could not remove folder");
+  forgetAll(c,id);
+ }
  static JSONObject pair(Context c,String id)throws Exception{
   JSONArray all=pairs(c);for(int i=0;i<all.length();i++)if(all.getJSONObject(i).getString("id").equals(id))return all.getJSONObject(i);
   throw new java.io.IOException("Folder pair not found");

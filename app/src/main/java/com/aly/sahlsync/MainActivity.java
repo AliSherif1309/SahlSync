@@ -285,6 +285,8 @@ public final class MainActivity extends Activity {
     actions.addView(SahlTheme.secondary(this,"Settings",()->editPair(pair)));
     actions.addView(SahlTheme.secondary(this,"Activity",()->showFolderHistory(pair)));
     actions.addView(SahlTheme.secondary(this,"Version history",()->showVersionFiles(pair)));
+    Button remove=SahlTheme.secondary(this,"Remove this folder",()->removePair(pair));
+    remove.setTextColor(android.graphics.Color.parseColor("#E8857A"));actions.addView(remove);
 
    }
    if(all.length()>1){
@@ -672,6 +674,18 @@ public final class MainActivity extends Activity {
    }catch(Exception e){runOnUiThread(()->message("Could not save the copy. The selected destination may be incomplete; choose another destination and try again."));}
    finally{source.delete();}
   });
+ }
+ private void removePair(JSONObject pair){
+  Tr.builder(this).setTitle("Remove this folder?")
+   .setMessage("Sahl Sync stops syncing it. Your files on the phone and in OneDrive are not deleted.")
+   .setNegativeButton("Cancel",null).setPositiveButton("Remove",(d,w)->{
+    try{
+     String id=pair.getString("id");
+     synchronized(BackupSchedule.class){BackupSchedule.cancel(this,id);Store.remove(this,id);}
+     WorkManager.getInstance(this).cancelUniqueWork("manual-"+id);
+     draw();loadAccount();
+    }catch(Exception e){message("Could not remove the folder.");}
+   }).show();
  }
  private void chooseLanguage(){
   String[] modes={"auto","en","ar"};
