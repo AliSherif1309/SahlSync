@@ -1,3 +1,9 @@
+## 1.2.0
+- New: Messages & apps backup (replaces SMS Import/Export and App List Backup).
+  - Back up SMS, MMS with attachments and the call log to one zip; restore without duplicates.
+  - Back up the list of installed apps (JSON + readable HTML page), optionally with APK files; reinstall missing apps from the list.
+  - Automatic daily, weekly or monthly backup into any folder, so Sahl Sync can carry it to OneDrive or the PC.
+
 ## 1.1.2
 - Wi-Fi Sync now runs as a background job: leave the app and it keeps going, with progress and a Stop button in the notification.
 

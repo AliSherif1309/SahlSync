@@ -5,10 +5,38 @@
  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+ <!-- Messages & apps backup (replaces SMS Import/Export and App List Backup) -->
+ <uses-permission android:name="android.permission.READ_SMS" />
+ <uses-permission android:name="android.permission.RECEIVE_SMS" />
+ <uses-permission android:name="android.permission.RECEIVE_MMS" />
+ <uses-permission android:name="android.permission.READ_CALL_LOG" />
+ <uses-permission android:name="android.permission.WRITE_CALL_LOG" />
+ <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
  <application android:label="Sahl Sync" android:icon="@drawable/sahl_sync_launcher" android:roundIcon="@drawable/sahl_sync_launcher" android:theme="@style/SahlTheme" android:allowBackup="false" android:fullBackupContent="false" android:usesCleartextTraffic="false" android:supportsRtl="true">
   <service android:name="androidx.work.impl.foreground.SystemForegroundService"
    android:foregroundServiceType="dataSync" tools:node="merge" />
   <activity android:name=".LanActivity" android:exported="false" />
+  <!-- Messages & apps backup. The SMS parts below are required by Android only so Sahl Sync can briefly be the
+       default SMS app while restoring messages; new SMS arriving during that time are saved to the inbox. -->
+  <activity android:name=".PhoneDataActivity" android:exported="true">
+   <intent-filter>
+    <action android:name="android.intent.action.SEND" /><action android:name="android.intent.action.SENDTO" />
+    <category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" />
+    <data android:scheme="sms" /><data android:scheme="smsto" /><data android:scheme="mms" /><data android:scheme="mmsto" />
+   </intent-filter>
+  </activity>
+  <receiver android:name=".SmsDeliverReceiver" android:exported="true" android:permission="android.permission.BROADCAST_SMS">
+   <intent-filter><action android:name="android.provider.Telephony.SMS_DELIVER" /></intent-filter>
+  </receiver>
+  <receiver android:name=".MmsDeliverReceiver" android:exported="true" android:permission="android.permission.BROADCAST_WAP_PUSH">
+   <intent-filter><action android:name="android.provider.Telephony.WAP_PUSH_DELIVER" /><data android:mimeType="application/vnd.wap.mms-message" /></intent-filter>
+  </receiver>
+  <service android:name=".RespondService" android:exported="true" android:permission="android.permission.SEND_RESPOND_VIA_MESSAGE">
+   <intent-filter>
+    <action android:name="android.intent.action.RESPOND_VIA_MESSAGE" /><category android:name="android.intent.category.DEFAULT" />
+    <data android:scheme="sms" /><data android:scheme="smsto" /><data android:scheme="mms" /><data android:scheme="mmsto" />
+   </intent-filter>
+  </service>
   <activity android:name=".MainActivity" android:exported="true">
    <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
   </activity>
