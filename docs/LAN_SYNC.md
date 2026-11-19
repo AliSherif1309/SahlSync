@@ -15,7 +15,7 @@ Substitute your PC address and test folder. Keep that terminal open and allow in
 ## On Android
 
 1. Open **Local Wi-Fi sync (preview)** in Sahl Sync.
-2. Scan the PC's pairing QR or enter its pairing code. Tap **Save** to verify the connection.
+2. Enter the PC's pairing code. If you use the optional QR, scan it with your phone’s camera or QR reader and paste the decoded text. Tap **Save** to verify the connection.
 3. Choose a test folder on the phone, then tap **Sync now**.
 
 The app compares file contents. New files transfer either way. After the first sync, edits made on one device transfer to the other. When both copies differ and both have changed, the app lists a conflict and keeps both originals. Deletions are never sent to the other device, so a missing copy can be restored from the surviving file. Empty folders do not sync. The preview supports up to 224 MiB per file and 5,000 items per run.

@@ -9,8 +9,6 @@ import android.os.Bundle;
 import android.view.WindowManager;
 import android.widget.*;
 import androidx.documentfile.provider.DocumentFile;
-import com.google.zxing.integration.android.IntentIntegrator;
-import com.google.zxing.integration.android.IntentResult;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import javax.net.ssl.SSLHandshakeException;
@@ -22,7 +20,7 @@ public final class LanActivity extends Activity {
  private static boolean running;
  private SharedPreferences settings;
  private TextView connection,folder,progress;
- private Button pair,scan,pick,sync;
+ private Button pair,pick,sync;
 
  @Override protected void onCreate(Bundle saved){
   super.onCreate(saved);
@@ -38,10 +36,6 @@ public final class LanActivity extends Activity {
   content.addView(SahlTheme.label(this,"Pair a PC, choose one phone folder, then sync while both devices are on the same Wi-Fi.",16,SahlTheme.MUTED));
   connection=SahlTheme.label(this,"",15,SahlTheme.MUTED);
   content.addView(connection);
-  scan=SahlTheme.button(this,"Scan PC pairing QR",()->new IntentIntegrator(this)
-   .setDesiredBarcodeFormats(IntentIntegrator.QR_CODE).setPrompt("Scan the QR shown on your PC")
-   .setBeepEnabled(false).initiateScan());
-  content.addView(scan);
   pair=SahlTheme.button(this,"Enter pairing code",()->enterCode(""));
   content.addView(pair);
   folder=SahlTheme.label(this,"",15,SahlTheme.MUTED);
@@ -67,7 +61,6 @@ public final class LanActivity extends Activity {
   folder.setText(selected==null?"No phone folder selected":"Phone folder: "+selected.getName());
   progress.setText(running?"Sync is running.":settings.getString("result",""));
   pair.setEnabled(!running);
-  scan.setEnabled(!running);
   pick.setEnabled(!running);
   sync.setEnabled(!running&&!code.isEmpty()&&selected!=null);
  }
@@ -84,7 +77,6 @@ public final class LanActivity extends Activity {
    try{
     LanPeer peer=new LanPeer(code);
     dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
-    scan.setEnabled(false);
     pair.setEnabled(false);
     pick.setEnabled(false);
     sync.setEnabled(false);
@@ -115,11 +107,6 @@ public final class LanActivity extends Activity {
  @SuppressWarnings("deprecation")
  @Override protected void onActivityResult(int request,int result,Intent data){
   super.onActivityResult(request,result,data);
-  IntentResult scanResult=IntentIntegrator.parseActivityResult(request,result,data);
-  if(scanResult!=null){
-   if(scanResult.getContents()!=null)enterCode(scanResult.getContents());
-   return;
-  }
   if(request!=CHOOSE_FOLDER||result!=RESULT_OK||data==null||data.getData()==null)return;
   try{
    Uri uri=data.getData();
