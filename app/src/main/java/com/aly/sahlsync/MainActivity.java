@@ -135,6 +135,35 @@ public final class MainActivity extends Activity {
   super.onRequestPermissionsResult(requestCode,permissions,results);
   if(requestCode==610)BackupNotifications.refreshStatus(this);
  }
+ private void checkForUpdates(Button button){
+  button.setEnabled(false);
+  button.setText("Checking for updates...");
+  io.execute(()->{
+   try{
+    ReleaseUpdates.Release newest=ReleaseUpdates.latest();
+    runOnUiThread(()->{
+     if(isFinishing()||isDestroyed())return;
+     button.setEnabled(true);
+     button.setText("Check for updates");
+     if(newest==null){message("No APK releases have been published yet.");return;}
+     if(newest.code<=BuildConfig.VERSION_CODE){message("You are up to date. Installed version: "+BuildConfig.VERSION_NAME);return;}
+     new AlertDialog.Builder(this).setTitle("Sahl Sync "+newest.version+" is available")
+      .setMessage("Installed version: "+BuildConfig.VERSION_NAME+". Open the GitHub release to download the APK and see what changed.")
+      .setNegativeButton("Later",null)
+      .setPositiveButton("Open release",(dialog,which)->{
+       try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(newest.page)));}
+       catch(ActivityNotFoundException error){message("Open this release in a browser: "+newest.page);}
+      }).show();
+    });
+   }catch(Exception error){runOnUiThread(()->{
+    if(isFinishing()||isDestroyed())return;
+    button.setEnabled(true);
+    button.setText("Check for updates");
+    message("Could not check GitHub for updates. Check your connection and try again.");
+   });}
+  });
+ }
+
  private void loadAccount(){
   IMultipleAccountPublicClientApplication session=auth;
   if(session==null)return;
@@ -189,6 +218,9 @@ public final class MainActivity extends Activity {
   connectButton=SahlTheme.button(this,"Connect OneDrive",this::connect);connect.addView(connectButton);
   disconnectButton=SahlTheme.button(this,"Disconnect an account",this::disconnect);connect.addView(disconnectButton);updateAccountButtons();
   connect.addView(SahlTheme.button(this,"Background & notifications",this::showBackgroundSetup));
+  Button updates=SahlTheme.button(this,"Check for updates",()->{});
+  updates.setOnClickListener(view->checkForUpdates(updates));
+  connect.addView(updates);
   LinearLayout pairs=card("Folder backups");
   pairs.addView(SahlTheme.label(this,"Choose upload only, download only, or two-way sync. Two-way sync uses the newest modified copy and keeps the earlier copy. File deletions are never synced. Limit: 128 MiB per file.",15,SahlTheme.MUTED));
   pairs.addView(SahlTheme.button(this,"Add folder backup",()->{

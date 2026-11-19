@@ -1,62 +1,39 @@
 # Sahl Sync
 
-Android folder backup with app-managed version history. Part of the Sahl suite.
+Sahl Sync pairs Android folders with Microsoft OneDrive. It supports upload only, download only, and optional newest-wins two-way sync.
 
-**0.2.0-alpha1 - development preview. Keep OneSync until real-device validation is complete.**
+## Install and update
 
-## File behavior
+Download the signed APK from [GitHub Releases](https://github.com/AliSherif1309/SahlSync/releases). Preview builds are marked as pre-releases. In the app, tap **Check for updates** to list the newest published APK by Android version code and open its release page. Android requires matching package and signing certificates for an in-place update. If you installed a local test build signed with a different key, keep it installed until you have a migration plan for your settings.
 
-- Each source file uses its original name in the backup folder: `report.txt`.
-- Changed content updates the same cloud item rather than creating hash-named working files.
-- Before an update, Sahl Sync downloads and verifies the previous cloud contents,
-  stores a separate snapshot, verifies that snapshot, then conditionally updates
-  the current item. Failed archiving prevents replacement.
-- Unchanged files do not create more snapshots. An independently changed cloud
-  file is reported as a conflict. Conditional writes protect against changes
-  between checking and updating.
-- History is made of Sahl-managed files under `.sahl-sync-history/<pair>/<file>/`,
-  with `origin.json` metadata. It does not call OneDrive's native version-history API.
-- **Version history** on each backup lets you choose a file, browse older copies,
-  and save a verified copy to your phone with Android's document picker. This
-  first history UI saves a copy; it does not overwrite the phone's current file.
-- Snapshots have no automatic expiry or cleanup in this preview. They consume
-  OneDrive quota and remain dependent on that storage existing and being accessible.
-- Previous hash-named alpha test copies are left untouched. Their contents are
-  not automatically migrated or deleted. New original-name receipts start with
-  the next backup; the following edit creates the first app-managed snapshot.
+## Features and limits
 
-The `VersionedBackup.Backend` contract is provider-independent so the same
-archive-before-update behavior can be used for future local/device sync backends.
-Only the OneDrive adapter exists today; this is not yet a Syncthing replacement.
+- Manual or scheduled runs with network and charging conditions, activity per folder, and optional completion notifications.
+- OneDrive account selection for each folder pair. Work or school accounts may require organization approval.
+- Resumable uploads for new files over 10 MiB. Existing-file replacements and downloads currently restart if interrupted.
+- Two-way mode uses the newest modified copy and preserves prior versions. Tied or missing timestamps with different contents are reported as conflicts. Deletions are not propagated.
+- **128 MiB maximum per file**, 5,000 items per run, and 32 levels of folder nesting. Oversized uploads can stop the current run. An oversized cloud-only download is reported as a conflict. Completed files remain available.
+- Older OneDrive copies are stored under `.sahl-sync-history` and can be saved from **Version history**. There is no automatic cleanup.
 
-## Current features and limits
+## Build from source
 
-Microsoft MSAL sign-in, persistent read-only local folder access, OneDrive folder
-browser, manual or approximate daily uploads, unmetered/charging/battery rules,
-exclusion globs, backup history, and the shared green/gold Sahl theme.
-
-20 MiB per file; 5,000 visited items and 32 nested folders per run. The reserved
-`.sahl-sync-history` folder is excluded from source traversal. No deletion sync,
-large/resumable transfers, two-way sync, in-place restore, retention settings or
-Arabic UI yet. WorkManager may interrupt long runs; completed uploads and
-snapshots remain. History browsing currently uses the saved pair/file index;
-metadata and snapshots remain in cloud storage if local settings are lost, but
-an automatic history-import UI is not implemented yet.
-
-## Build and testing
-
-JDK 17, Android SDK 36, Gradle 9.5.0. CI runs unit tests, lint and APK compilation.
-See [Microsoft setup](docs/MICROSOFT_SETUP.md) for the registered local test build.
-App id: `com.aly.sahlsync`.
+Use JDK 17, Android SDK 36 and Gradle 9.5.0. The package is `com.aly.sahlsync`.
 
 ```sh
 gradle testDebugUnitTest lintDebug assembleDebug
 ```
 
-Real-device testing of earlier previews verified sign-in, first upload, unchanged
-skips and separate edited versions. This preview needs a clean-name update,
-archive browsing, saved-copy verification and cloud-edit conflict test on-device.
+See [Microsoft setup](docs/MICROSOFT_SETUP.md) for account registration and local testing.
 
-MSAL owns credentials; no passwords/tokens are logged. No analytics backend.
-Device-local account/folder state is excluded from Android cloud backup.
-[Shared design rules](docs/DESIGN.md) apply to future screens.
+## Publish a release
+
+Set these repository Actions secrets for the designated Sahl Sync signing key:
+
+- `SIGNING_KEYSTORE_BASE64`
+- `SIGNING_STORE_PASSWORD`
+- `SIGNING_KEY_ALIAS`
+- `SIGNING_KEY_PASSWORD`
+
+Register the release certificate's Base64 SHA-1 hash for Android package `com.aly.sahlsync` in Microsoft Entra. If it differs from the local test registration, set the `MSAL_SIGNATURE` repository variable to the registered release hash. Set `MSAL_CLIENT_ID` if using a separate Microsoft application registration. The release job verifies the signing key and manifest before publication.
+
+Bump both `versionName` and `versionCode` in `app/build.gradle`. Merging the version change to `main` builds, signs, verifies and publishes a numbered release with the APK and SHA-256 checksum. You can also run **Publish Sahl Sync release** manually from `main`. A previously published tag is left intact. Alpha and beta versions are published as pre-releases.
