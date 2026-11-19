@@ -12,7 +12,7 @@ Download the signed APK from [GitHub Releases](https://github.com/AliSherif1309/
 - OneDrive account selection for each folder pair. Work or school accounts may require organization approval.
 - Resumable uploads for new files over 10 MiB. Existing-file replacements and downloads currently restart if interrupted.
 - Two-way mode uses the newest modified copy and preserves prior versions. Tied or missing timestamps with different contents are reported as conflicts. Deletions are not propagated.
-- **128 MiB maximum per file**, 5,000 items per run, and 32 levels of folder nesting. Oversized uploads can stop the current run. An oversized cloud-only download is reported as a conflict. Completed files remain available.
+- **224 MiB maximum per file**, 5,000 items per run, and 32 levels of folder nesting. Oversized files are skipped and listed in Backup activity while the rest of the run continues.
 - Older OneDrive copies are stored under `.sahl-sync-history` and can be saved from **Version history**. There is no automatic cleanup.
 
 ## Build from source

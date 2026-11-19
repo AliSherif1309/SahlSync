@@ -67,7 +67,7 @@ final class Graph {
  private JSONObject putFile(String address,File file,String ifMatch)throws Exception{
   BackupCancellation.check();
   long size=file.length();
-  if(size>BackupRules.MAX_FILE_BYTES)throw new IOException("File too large");
+  BackupRules.requireFileSize(size);
   HttpURLConnection connection=(HttpURLConnection)URI.create(address).toURL().openConnection();
   try {
    connection.setInstanceFollowRedirects(false);

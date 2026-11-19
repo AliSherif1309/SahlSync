@@ -222,7 +222,7 @@ public final class MainActivity extends Activity {
   updates.setOnClickListener(view->checkForUpdates(updates));
   connect.addView(updates);
   LinearLayout pairs=card("Folder backups");
-  pairs.addView(SahlTheme.label(this,"Choose upload only, download only, or two-way sync. Two-way sync uses the newest modified copy and keeps the earlier copy. File deletions are never synced. Limit: 128 MiB per file.",15,SahlTheme.MUTED));
+  pairs.addView(SahlTheme.label(this,"Choose upload only, download only, or two-way sync. Two-way sync uses the newest modified copy and keeps the earlier copy. File deletions are never synced. Limit: "+BackupRules.MAX_FILE_MIB+" MiB per file.",15,SahlTheme.MUTED));
   pairs.addView(SahlTheme.button(this,"Add folder backup",()->{
    if(accounts.isEmpty()){message("Connect OneDrive first.");return;}
    pickPhoneFolder(42,null);
