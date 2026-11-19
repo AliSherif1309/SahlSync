@@ -90,6 +90,7 @@ public final class LanActivity extends Activity {
    syncAll.setVisibility(all.size()>1?android.view.View.VISIBLE:android.view.View.GONE);
    setControls(!running);
    LanWorker.schedule(getApplicationContext(),selected);
+   Tr.tree(this,getWindow().getDecorView());
    history.setEnabled(!running&&selected.ready());
    sync.setEnabled(!running&&selected.ready());
    syncAll.setEnabled(!running&&all.stream().anyMatch(LanPairs.Pair::ready));
@@ -115,14 +116,14 @@ public final class LanActivity extends Activity {
   form.addView(SahlTheme.label(this,"Auto sync (on Wi-Fi, in the background)",15,SahlTheme.TEXT));
   Spinner auto=new Spinner(this);
   String[] labels=new String[AUTO.length];for(int i=0;i<AUTO.length;i++)labels[i]=autoLabel(AUTO[i]);
-  ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,labels);auto.setAdapter(adapter);
+  ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,Tr.all(this,labels));auto.setAdapter(adapter);
   for(int i=0;i<AUTO.length;i++)if(AUTO[i]==target.autoMinutes)auto.setSelection(i);
   form.addView(auto);
   CheckBox charging=new CheckBox(this);charging.setText("Auto sync only while charging");charging.setChecked(target.autoCharging);form.addView(charging);
   CheckBox deletions=new CheckBox(this);deletions.setText("Sync deletions (two-way mode). Deleted files stay in Version history.");
   deletions.setChecked(target.deletions);form.addView(deletions);
   EditText name=new EditText(this);name.setHint("Folder pair name");name.setText(target.name);name.setSingleLine(true);form.addView(name);
-  new AlertDialog.Builder(this).setTitle("Options").setView(form).setNegativeButton("Cancel",null).setPositiveButton("Save",(d,w)->{
+  Tr.builder(this).setTitle("Options").setView(form).setNegativeButton("Cancel",null).setPositiveButton("Save",(d,w)->{
    target.autoMinutes=AUTO[auto.getSelectedItemPosition()];
    target.autoCharging=charging.isChecked();
    target.deletions=deletions.isChecked();
@@ -137,7 +138,7 @@ public final class LanActivity extends Activity {
    List<LanPairs.Pair> all=pairs.list();
    String[] names=new String[all.size()];
    for(int i=0;i<names.length;i++)names[i]=all.get(i).name;
-   new AlertDialog.Builder(this).setTitle("Folder pairs").setItems(names,(dialog,index)->{
+   Tr.builder(this).setTitle("Folder pairs").setItems(names,(dialog,index)->{
     pairs.select(all.get(index).id);
     refresh();
    }).setNegativeButton("Close",null).show();
@@ -148,7 +149,7 @@ public final class LanActivity extends Activity {
   EditText name=new EditText(this);
   name.setSingleLine(true);
   name.setHint("Folder pair name");
-  new AlertDialog.Builder(this).setTitle("Add folder pair").setView(name)
+  Tr.builder(this).setTitle("Add folder pair").setView(name)
    .setPositiveButton("Add",(dialog,which)->{
     try{
      String label=name.getText().toString().trim();
@@ -182,7 +183,7 @@ public final class LanActivity extends Activity {
   input.setSingleLine(true);
   input.setHint("Pairing code from your PC");
   input.setText(value);
-  AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Pair with your PC").setView(input)
+  AlertDialog dialog=Tr.builder(this).setTitle("Pair with your PC").setView(input)
    .setPositiveButton("Save",null).setNegativeButton("Cancel",null).create();
   dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view->{
    String code=input.getText().toString().trim();
@@ -274,7 +275,7 @@ public final class LanActivity extends Activity {
   LanFolderSync.Mode[] modes=LanFolderSync.Mode.values();
   String[] labels=new String[modes.length];
   for(int i=0;i<modes.length;i++)labels[i]=modes[i].label;
-  new AlertDialog.Builder(this).setTitle("Sync mode")
+  Tr.builder(this).setTitle("Sync mode")
    .setSingleChoiceItems(labels,selectedMode().ordinal(),(dialog,index)->{
     try{
      target.mode=modes[index].name();
@@ -298,7 +299,7 @@ public final class LanActivity extends Activity {
     List<LanVersions.Version> versions=versions(target).list();
     runOnUiThread(()->{
      if(isDestroyed())return;
-     AlertDialog.Builder dialog=new AlertDialog.Builder(this).setTitle("Version history");
+     AlertDialog.Builder dialog=Tr.builder(this).setTitle("Version history");
      if(versions.isEmpty())dialog.setMessage("No older versions saved for this folder.");
      else{
       String[] labels=new String[versions.size()];

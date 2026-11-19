@@ -16,8 +16,8 @@ final class SahlTheme {
   GradientDrawable d=new GradientDrawable(); d.setColor(color); d.setCornerRadius(dp(c,18)); return d;
  }
  static TextView label(Context c,String value,int size,int color){
-  TextView t=new TextView(c); t.setText(value); t.setTextSize(size); t.setTextColor(color);
-  t.setPadding(0,dp(c,6),0,dp(c,6)); return t;
+  TextView t=new TextView(c); t.setText(Tr.t(c,value)); t.setTextSize(size); t.setTextColor(color);
+  t.setPadding(0,dp(c,6),0,dp(c,6)); Fonts.apply(c,t); return t;
  }
  /** Primary action: gold pill. */
  static Button button(Context c,String title,Runnable click){
@@ -34,11 +34,11 @@ final class SahlTheme {
   return b;
  }
  private static Button base(Context c,String title,Runnable click){
-  Button b=new Button(c); b.setText(title); b.setAllCaps(false); b.setTextSize(15);
+  Button b=new Button(c); b.setText(Tr.t(c,title)); b.setAllCaps(false); b.setTextSize(15);
   b.setStateListAnimator(null); b.setMinHeight(dp(c,52)); b.setPadding(dp(c,18),dp(c,10),dp(c,18),dp(c,10));
   LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT);
   p.setMargins(0,dp(c,5),0,dp(c,5)); b.setLayoutParams(p);
-  b.setOnClickListener(v->click.run()); return b;
+  b.setOnClickListener(v->click.run()); Fonts.apply(c,b); return b;
  }
  private static android.graphics.drawable.Drawable ripple(Context c,int fill,int stroke,int pressed){
   GradientDrawable shape=new GradientDrawable(); shape.setColor(fill); shape.setCornerRadius(dp(c,26));

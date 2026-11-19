@@ -27,12 +27,12 @@ jobs:
       - name: Test and build SahlSyncPC.exe
         shell: pwsh
         run: |
-          python -m pip install --disable-pip-version-check pyinstaller cryptography "qrcode[pil]"
+          python -m pip install --disable-pip-version-check pyinstaller cryptography "qrcode[pil]" pystray
           Push-Location desktop
           python test_sahl_sync_lan.py
           Pop-Location
           pyinstaller --noconfirm --onefile --windowed --name SahlSyncPC --paths desktop `
-            --hidden-import sahl_sync_lan --collect-submodules qrcode desktop/sahl_sync_pc.py
+            --hidden-import sahl_sync_lan --hidden-import pystray._win32 --collect-submodules qrcode desktop/sahl_sync_pc.py
           Get-Item dist/SahlSyncPC.exe
       - uses: actions/upload-artifact@v4
         with:

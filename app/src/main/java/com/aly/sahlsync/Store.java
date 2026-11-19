@@ -3,6 +3,7 @@ package com.aly.sahlsync;
 import android.content.Context;
 import android.content.SharedPreferences;
 import org.json.*;
+import java.util.*;
 
 final class Store {
  static SharedPreferences prefs(Context c){return c.getSharedPreferences("sync",Context.MODE_PRIVATE);}
@@ -38,6 +39,15 @@ final class Store {
   SharedPreferences.Editor edit=receipts.edit();
   for(String key:receipts.getAll().keySet())if(key.startsWith(pair+":"))edit.remove(key);
   if(!edit.commit())throw new java.io.IOException("Could not reset sync records");
+ }
+ /** Sync records for every file inside a folder (path prefix ending in "/"). */
+ static synchronized Map<String,JSONObject> under(Context c,String pair,String prefix)throws Exception{
+  Map<String,JSONObject> found=new HashMap<>();
+  String key=pair+":"+prefix;
+  for(Map.Entry<String,?> entry:c.getSharedPreferences("file-receipts",0).getAll().entrySet())
+   if(entry.getKey().startsWith(key)&&entry.getValue() instanceof String)
+    found.put(entry.getKey().substring(pair.length()+1),new JSONObject((String)entry.getValue()));
+  return found;
  }
  static synchronized JSONArray files(Context c,String pair)throws Exception{
   JSONArray files=new JSONArray();for(Object raw:c.getSharedPreferences("file-receipts",0).getAll().values()){

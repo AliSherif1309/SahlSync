@@ -123,6 +123,10 @@ final class FolderSync {
     continue;
    }
    if(phoneFolder||cloudFolder){
+    if(direction==SyncDirection.NEWEST&&pair.optBoolean("syncDeletions",true)&&(phone==null)!=(remote==null)){
+     Map<String,JSONObject> known=Store.under(context,pairId,relative+"/");
+     if(!known.isEmpty()&&(phone==null?deleteCloudFolder(remote,relative,known):deletePhoneFolder(drive,phone,relative,known)))continue;
+    }
     if(remote==null&&direction==SyncDirection.DOWNLOAD)continue;
     Uri child=phone!=null?phone.uri:makeDocument(parent,Document.MIME_TYPE_DIR,name);
     String destination=remote!=null?remote.getString("id"):graph.folder(drive,name);
@@ -239,6 +243,82 @@ final class FolderSync {
 
  private void remember(String path,String name,VersionedBackup.Item item,String hash,long phoneModified)throws Exception{
   Store.receipt(context,pairId,path,name,new VersionedBackup.Receipt(item.id,item.tag,hash,item.size),phoneModified);
+ }
+
+ /**
+  * A folder deleted on the phone: if every file inside the OneDrive copy is exactly as last synced, archive each one
+  * to Version history and delete the OneDrive folder. Otherwise (something changed there) the folder is restored.
+  */
+ private boolean deleteCloudFolder(JSONObject folder,String relative,Map<String,JSONObject> known)throws Exception{
+  List<JSONObject[]> files=new ArrayList<>();
+  if(!collectCloud(folder.getString("id"),relative+"/",known,files,0))return false;
+  for(JSONObject[] entry:files){
+   BackupCancellation.check();
+   JSONObject cloud=entry[0],receipt=entry[1];
+   String path=receipt.getString("path"),name=receipt.optString("name",cloud.getString("name"));
+   String parentId=cloud.getJSONObject("parentReference").getString("id");
+   new OneDriveBackup(context,graph,pair,parentId,path,name).archive(
+    new VersionedBackup.Item(cloud.getString("id"),cloud.getString("eTag"),cloud.getLong("size")),receipt.getString("hash"));
+  }
+  graph.delete(folder.getString("id"),null);
+  for(JSONObject[] entry:files)Store.forget(context,pairId,entry[1].getString("path"));
+  Store.history(context,pairId,relative+"/: folder deleted from OneDrive ("+files.size()+" files kept in Version history).");
+  deleted++;
+  return true;
+ }
+
+ private boolean collectCloud(String folderId,String prefix,Map<String,JSONObject> known,List<JSONObject[]> out,int depth)throws Exception{
+  if(depth>32)return false;
+  JSONArray rows=graph.children(folderId);
+  for(int i=0;i<rows.length();i++){
+   JSONObject row=rows.getJSONObject(i);
+   String path=prefix+row.getString("name");
+   if(row.has("folder")){if(!collectCloud(row.getString("id"),path+"/",known,out,depth+1))return false;continue;}
+   JSONObject receipt=known.get(path);
+   if(receipt==null||!row.optString("id").equals(receipt.optString("id"))||!row.optString("eTag").equals(receipt.optString("tag"))
+    ||row.optLong("size",-1)!=receipt.optLong("size",-2))return false;
+   out.add(new JSONObject[]{row,receipt});
+  }
+  return true;
+ }
+
+ /**
+  * A folder deleted on OneDrive: if every phone file inside is exactly as last synced, save each one to Version
+  * history and delete the phone folder. Otherwise (something changed on the phone) the folder is uploaded again.
+  */
+ private boolean deletePhoneFolder(String drive,Local folder,String relative,Map<String,JSONObject> known)throws Exception{
+  List<Object[]> files=new ArrayList<>();
+  if(!collectPhone(folder.uri,relative+"/",known,files,0))return false;
+  for(Object[] entry:files){
+   BackupCancellation.check();
+   Local phone=(Local)entry[0];JSONObject receipt=(JSONObject)entry[1];
+   File copy=File.createTempFile("sync-deleted-",".tmp",context.getCacheDir());
+   try{
+    String hash;
+    try(InputStream input=resolver.openInputStream(phone.uri);OutputStream output=new FileOutputStream(copy)){
+     if(input==null)throw new IOException("Cannot read phone file");
+     hash=BackupRules.hash(input,output);
+    }
+    new OneDriveBackup(context,graph,pair,drive,receipt.getString("path"),phone.name).archiveLocal(copy,hash);
+   }finally{copy.delete();}
+  }
+  if(!DocumentsContract.deleteDocument(resolver,folder.uri))throw new LocalConflict("Phone storage could not delete the folder.");
+  for(Object[] entry:files)Store.forget(context,pairId,((JSONObject)entry[1]).getString("path"));
+  Store.history(context,pairId,relative+"/: folder deleted on the phone because it was deleted on OneDrive ("+files.size()+" files kept in Version history).");
+  deleted++;
+  return true;
+ }
+
+ private boolean collectPhone(Uri folder,String prefix,Map<String,JSONObject> known,List<Object[]> out,int depth)throws Exception{
+  if(depth>32)return false;
+  for(Local child:localChildren(folder).values()){
+   String path=prefix+child.name;
+   if(child.directory()){if(!collectPhone(child.uri,path+"/",known,out,depth+1))return false;continue;}
+   JSONObject receipt=known.get(path);
+   if(receipt==null||child.modified<=0||child.modified!=receipt.optLong("phoneModified",-1)||child.size!=receipt.optLong("size",-2))return false;
+   out.add(new Object[]{child,receipt});
+  }
+  return true;
  }
 
  /** Deleted on the phone: keep a verified copy in OneDrive history, then remove the cloud file. */

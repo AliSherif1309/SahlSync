@@ -23,6 +23,7 @@ final class LanFolderSync {
  private boolean syncDeletions=true;
  private JSONObject lastState=new JSONObject(),hashCache=new JSONObject(),newCache=new JSONObject();
  private final JSONObject newState=new JSONObject();
+ private final Map<String,DocumentFile> dirs=new HashMap<>();
 
  LanFolderSync deletions(boolean enabled){syncDeletions=enabled;return this;}
  private android.content.SharedPreferences store(){return context.getSharedPreferences("lan-sync-state",Context.MODE_PRIVATE);}
@@ -143,7 +144,7 @@ final class LanFolderSync {
     registerName(path);
     DocumentFile item=DocumentFile.fromSingleUri(context,android.provider.DocumentsContract.buildDocumentUriUsingTree(parent,rows.getString(0)));
     if(item==null)throw new IOException("Could not access a phone file.");
-    if("vnd.android.document/directory".equals(rows.getString(2)))scan(item,path+"/",depth+1);
+    if("vnd.android.document/directory".equals(rows.getString(2))){dirs.put(path,item);scan(item,path+"/",depth+1);}
     else{
      if(rows.getLong(3)>BackupRules.MAX_FILE_BYTES){skipped++;continue;}
      try{
@@ -172,6 +173,13 @@ final class LanFolderSync {
    try(OutputStream out=new FileOutputStream(copy)){if(!phone.hash.equals(hash(phone.document,out)))throw new LanPeer.Changed();}
   });
   if(!phone.document.delete())throw new IOException("Could not remove the phone file.");
+  // Remove folders that are now empty, so a folder deleted on the PC disappears from the phone too.
+  for(String parent=path;parent.contains("/");){
+   parent=parent.substring(0,parent.lastIndexOf('/'));
+   DocumentFile folder=dirs.get(parent);
+   if(folder==null||folder.listFiles().length>0||!folder.delete())break;
+   dirs.remove(parent);
+  }
  }
 
  private void registerName(String path)throws IOException{

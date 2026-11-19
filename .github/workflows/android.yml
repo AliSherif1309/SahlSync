@@ -23,6 +23,10 @@ jobs:
    - uses: gradle/actions/setup-gradle@v4
      with:
       gradle-version: '9.5.0'
+   - name: Thmanyah font (packed scrambled when FONT_KEY is set)
+     env:
+      FONT_KEY: ${{ secrets.FONT_KEY }}
+     run: python3 tools/pack_fonts.py
    - name: Unit tests, lint and debug APK
      run: gradle testDebugUnitTest lintDebug assembleDebug --no-daemon
    - uses: actions/upload-artifact@v4

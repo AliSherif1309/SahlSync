@@ -64,7 +64,7 @@ public final class MainActivity extends Activity {
  private void offerBackgroundSetup(){
   if(backgroundAllowed())return;
   Store.prefs(this).edit().putBoolean("backgroundSetupOffered",true).apply();
-  new AlertDialog.Builder(this).setTitle("Allow background backups?")
+  Tr.builder(this).setTitle("Allow background backups?")
    .setMessage("Some phones block OneDrive connections when Sahl Sync is in the background. Allow background backups to help your schedules run. This setting applies to Sahl Sync only.")
    .setNegativeButton("Not now",null)
    .setPositiveButton("Continue",(dialog,button)->openBackgroundPermission()).show();
@@ -109,7 +109,7 @@ public final class MainActivity extends Activity {
   form.addView(SahlTheme.label(this,"If backups are still delayed, check your phone's background app settings.",14,SahlTheme.MUTED));
   ScrollView scroll=new ScrollView(this);
   scroll.addView(form);
-  new AlertDialog.Builder(this).setTitle("Background & notifications").setView(scroll)
+  Tr.builder(this).setTitle("Background & notifications").setView(scroll)
    .setNegativeButton("Close",null)
    .setNeutralButton("App settings",(dialog,button)->{
     saveNotificationOptions(results.isChecked(),pinned.isChecked());
@@ -147,7 +147,7 @@ public final class MainActivity extends Activity {
      button.setText("Check for updates");
      if(newest==null){message("No APK releases have been published yet.");return;}
      if(newest.code<=BuildConfig.VERSION_CODE){message("You are up to date. Installed version: "+BuildConfig.VERSION_NAME);return;}
-     new AlertDialog.Builder(this).setTitle("Sahl Sync "+newest.version+" is available")
+     Tr.builder(this).setTitle("Sahl Sync "+newest.version+" is available")
       .setMessage("Installed version: "+BuildConfig.VERSION_NAME+". Open the GitHub release to download the APK and see what changed.")
       .setNegativeButton("Later",null)
       .setPositiveButton("Open release",(dialog,which)->{
@@ -196,7 +196,7 @@ public final class MainActivity extends Activity {
   if(autoSelect&&choices.size()==1){action.accept(choices.get(0));return;}
   String[] labels=new String[choices.size()];
   for(int index=0;index<labels.length;index++)labels[index]=accountLabel(choices.get(index));
-  new AlertDialog.Builder(this).setTitle(title).setItems(labels,(dialog,index)->action.accept(choices.get(index)))
+  Tr.builder(this).setTitle(title).setItems(labels,(dialog,index)->action.accept(choices.get(index)))
    .setNegativeButton("Cancel",null).show();
  }
  private LinearLayout card(String title){
@@ -220,6 +220,7 @@ public final class MainActivity extends Activity {
   Button updates=SahlTheme.secondary(this,"Check for updates",()->{});
   updates.setOnClickListener(view->checkForUpdates(updates));
   connect.addView(updates);
+  connect.addView(SahlTheme.secondary(this,"Language / اللغة",this::chooseLanguage));
   content.addView(SahlTheme.button(this,"Sync with my PC (Wi-Fi)",()->startActivity(new Intent(this,LanActivity.class))));
   LinearLayout pairs=card("Folder backups");
   pairs.addView(SahlTheme.label(this,"Tap a folder to sync it or change its settings. Replaced and deleted files are kept in Version history.",14,SahlTheme.MUTED));
@@ -315,9 +316,10 @@ public final class MainActivity extends Activity {
   log.addView(SahlTheme.secondary(this,"View full history",()->{
    ScrollView list=new ScrollView(this);
    list.addView(SahlTheme.label(this,historyText(50),15,SahlTheme.TEXT));
-   new AlertDialog.Builder(this).setTitle("Backup history").setView(list).setPositiveButton("Close",null).show();
+   Tr.builder(this).setTitle("Backup history").setView(list).setPositiveButton("Close",null).show();
   }));
   log.addView(history);
+  Tr.tree(this,content);
  }
  private void watchWork(String name,TextView label,boolean periodic,boolean timed){
   androidx.lifecycle.LiveData<List<WorkInfo>> live=timed?WorkManager.getInstance(this).getWorkInfosByTagLiveData(name)
@@ -363,7 +365,7 @@ public final class MainActivity extends Activity {
   live.observeForever(observer);unwatch.add(()->live.removeObserver(observer));
  }
  private void cancelBackup(JSONObject pair){
-  new AlertDialog.Builder(this).setTitle("Cancel backup?").setMessage("Stop queued and running backups for this folder and turn off its schedule. Completed files and history are kept. A request already accepted by OneDrive may finish.").setNegativeButton("Keep running",null).setPositiveButton("Cancel backup",(d,w)->{
+  Tr.builder(this).setTitle("Cancel backup?").setMessage("Stop queued and running backups for this folder and turn off its schedule. Completed files and history are kept. A request already accepted by OneDrive may finish.").setNegativeButton("Keep running",null).setPositiveButton("Cancel backup",(d,w)->{
    try{JSONObject saved=Store.pair(this,pair.getString("id"));synchronized(BackupSchedule.class){
     saved.put("daily",false).put("scheduleMode",0).put("scheduleGeneration","");
     Store.update(this,saved);BackupSchedule.cancel(this,pair.optString("id"));}
@@ -397,14 +399,14 @@ public final class MainActivity extends Activity {
    form.addView(SahlTheme.label(this,"Older copies to keep per file",15,SahlTheme.TEXT));
    Spinner keep=new Spinner(this);
    int[] keepValues={3,10,30,100,0};
-   keep.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,new String[]{"3","10","30","100","All (no cleanup)"}));
+   keep.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,Tr.all(this,new String[]{"3","10","30","100","All (no cleanup)"})));
    for(int k=0;k<keepValues.length;k++)if(keepValues[k]==pair.optInt("keepVersions",10))keep.setSelection(k);
    form.addView(keep);
    CheckBox notify=new CheckBox(this);notify.setText("Notify me when this folder finishes syncing");
    notify.setChecked(pair.optBoolean("notify",true));form.addView(notify);
    ScheduleEditor schedule=new ScheduleEditor(this,form,pair);
    ScrollView scroll=new ScrollView(this);scroll.addView(form);
-   AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Edit backup settings").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
+   AlertDialog dialog=Tr.builder(this).setTitle("Edit backup settings").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
    holder[0]=dialog;
    dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
     try{String title=name.getText().toString().trim();if(title.isEmpty()){name.setError("Enter a backup name");return;}
@@ -426,7 +428,7 @@ public final class MainActivity extends Activity {
   ScrollView list=new ScrollView(this);
   String entries=historyText("history-"+pair.optString("id"),50);
   list.addView(SahlTheme.label(this,entries,15,SahlTheme.TEXT));
-  new AlertDialog.Builder(this).setTitle(pair.optString("name")+" - Backup activity")
+  Tr.builder(this).setTitle(pair.optString("name")+" - Backup activity")
    .setView(list).setPositiveButton("Close",null).show();
  }
  private void refreshHistory(){history.setText(historyText(3));}
@@ -461,7 +463,7 @@ public final class MainActivity extends Activity {
 
  private void disconnect(){
   if(auth==null)return;
-  selectAccount("Disconnect which account?",false,owner->new AlertDialog.Builder(this)
+  selectAccount("Disconnect which account?",false,owner->Tr.builder(this)
    .setTitle("Disconnect Microsoft account?")
    .setMessage("Disconnect "+accountLabel(owner)+"? Backups for this account will require reconnecting it. Your folder settings stay saved.")
    .setNegativeButton("Cancel",null).setPositiveButton("Disconnect",(dialog,button)->io.execute(()->{
@@ -529,7 +531,7 @@ public final class MainActivity extends Activity {
   Spinner picker=new Spinner(this);
   picker.setContentDescription("Sync mode");
   ArrayAdapter<String> options=new ArrayAdapter<>(this,android.R.layout.simple_spinner_item,
-   new String[]{"Upload only (phone to OneDrive)","Download only (OneDrive to phone)","Two-way (newest modified wins)"});
+   Tr.all(this,new String[]{"Upload only (phone to OneDrive)","Download only (OneDrive to phone)","Two-way (newest modified wins)"}));
   options.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
   picker.setAdapter(options);
   picker.setSelection("newest".equals(saved)?2:"download".equals(saved)?1:0);
@@ -549,7 +551,7 @@ public final class MainActivity extends Activity {
   int selected=direction.getSelectedItemPosition();
   Uri tree=Uri.parse(pair.getString("local"));
   if(selected!=0&&!FolderSync.writable(getContentResolver(),tree)){
-   new AlertDialog.Builder(this).setTitle("Allow writing to the phone folder?")
+   Tr.builder(this).setTitle("Allow writing to the phone folder?")
     .setMessage("Select the same phone folder to allow Sahl Sync to save files from OneDrive.")
     .setNegativeButton("Cancel",null).setPositiveButton("Select folder",(dialog,button)->{
      pendingWriteTree=tree.toString();
@@ -569,7 +571,7 @@ public final class MainActivity extends Activity {
     JSONObject parent=graph.json("GET","/me/drive/"+(id.equals("root")?"root":"items/"+Uri.encode(id)),null);
     JSONArray folders=graph.folders(parent.getString("id"));
     List<String> options=new ArrayList<>();options.add("Use this folder");options.add("Back to OneDrive root");for(int i=0;i<folders.length();i++)options.add(folders.getJSONObject(i).getString("name"));
-    runOnUiThread(()->{loadAccount();new AlertDialog.Builder(this).setTitle(name).setItems(options.toArray(new String[0]),(d,index)->{try{if(index==0&&editingPair!=null)changeRemote(parent.getString("id"),name,owner);else if(index==0)configurePair(parent.getString("id"),name,owner);else if(index==1)chooseRemote("root","OneDrive",owner);else{JSONObject folder=folders.getJSONObject(index-2);chooseRemote(folder.getString("id"),folder.getString("name"),owner);}}catch(Exception e){message("Could not select folder.");}}).setNegativeButton("Cancel",null).show();});
+    runOnUiThread(()->{loadAccount();Tr.builder(this).setTitle(name).setItems(options.toArray(new String[0]),(d,index)->{try{if(index==0&&editingPair!=null)changeRemote(parent.getString("id"),name,owner);else if(index==0)configurePair(parent.getString("id"),name,owner);else if(index==1)chooseRemote("root","OneDrive",owner);else{JSONObject folder=folders.getJSONObject(index-2);chooseRemote(folder.getString("id"),folder.getString("name"),owner);}}catch(Exception e){message("Could not select folder.");}}).setNegativeButton("Cancel",null).show();});
    }catch(Exception e){runOnUiThread(()->{loadAccount();message("Could not load OneDrive folders. Check connection and account permission.");});}
   });
  }
@@ -599,7 +601,7 @@ public final class MainActivity extends Activity {
   Spinner direction=addDirection(form,"upload");
   ScheduleEditor schedule=new ScheduleEditor(this,form,new JSONObject());
   ScrollView scroll=new ScrollView(this);scroll.addView(form);
-  AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Create folder backup").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
+  AlertDialog dialog=Tr.builder(this).setTitle("Create folder backup").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
   dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
    try{String title=name.getText().toString().trim();if(title.isEmpty()){name.setError("Enter a backup name");return;}
     JSONObject pair=new JSONObject().put("id",UUID.randomUUID().toString()).put("name",title).put("local",pendingLocal).put("remote",remote).put("remoteName",remoteName).put("account",owner.getId()).put("accountLabel",accountLabel(owner)).put("exclude",exclude.getText().toString()).put("unmetered",wifi.isChecked()).put("charging",charging.isChecked());
@@ -619,7 +621,7 @@ public final class MainActivity extends Activity {
    JSONArray files=Store.files(this,pair.getString("id"));
    if(files.length()==0){message("Run this backup first. Version history stores the previous contents when a backed-up file changes.");return;}
    String[] names=new String[files.length()];for(int i=0;i<names.length;i++)names[i]=files.getJSONObject(i).getString("path");
-   new AlertDialog.Builder(this).setTitle("Version history - choose file").setItems(names,(d,index)->{try{showVersions(pair,files.getJSONObject(index));}catch(Exception e){message("Could not read file history.");}}).setNegativeButton("Close",null).show();
+   Tr.builder(this).setTitle("Version history - choose file").setItems(names,(d,index)->{try{showVersions(pair,files.getJSONObject(index));}catch(Exception e){message("Could not read file history.");}}).setNegativeButton("Close",null).show();
   }catch(Exception e){message("Could not read file history.");}
  }
  private void showVersions(JSONObject pair,JSONObject file){
@@ -632,8 +634,8 @@ public final class MainActivity extends Activity {
      try{
       String[] labels=new String[versions.length()];
       for(int i=0;i<labels.length;i++){JSONObject version=versions.getJSONObject(i);String filename=version.getString("name");long date=Long.parseLong(filename.substring(0,filename.indexOf('-')));labels[i]=java.text.DateFormat.getDateTimeInstance().format(new Date(date))+" - "+version.optLong("size")+" bytes";}
-      new AlertDialog.Builder(this).setTitle(file.getString("name")+" - older copies").setItems(labels,(d,index)->{
-       try{JSONObject version=versions.getJSONObject(index);new AlertDialog.Builder(this).setTitle("Save older version?").setMessage("Save this version as a separate file on your phone. Your current file and cloud backup stay unchanged.").setNegativeButton("Cancel",null).setPositiveButton("Save a copy",(dialog,which)->downloadSnapshot(pair,file,version)).show();}catch(Exception e){message("Could not select version.");}
+      Tr.builder(this).setTitle(file.getString("name")+" - older copies").setItems(labels,(d,index)->{
+       try{JSONObject version=versions.getJSONObject(index);Tr.builder(this).setTitle("Save older version?").setMessage("Save this version as a separate file on your phone. Your current file and cloud backup stay unchanged.").setNegativeButton("Cancel",null).setPositiveButton("Save a copy",(dialog,which)->downloadSnapshot(pair,file,version)).show();}catch(Exception e){message("Could not select version.");}
       }).setNegativeButton("Close",null).show();
      }catch(Exception e){message("Could not display versions.");}
     });
@@ -671,7 +673,15 @@ public final class MainActivity extends Activity {
    finally{source.delete();}
   });
  }
- private void message(String text){if(!isFinishing()&&!isDestroyed())new AlertDialog.Builder(this).setMessage(text).setPositiveButton("OK",null).show();}
+ private void chooseLanguage(){
+  String[] modes={"auto","en","ar"};
+  String[] labels={"Automatic (phone language)","English","العربية"};
+  int current=java.util.Arrays.asList(modes).indexOf(Tr.language(this));
+  Tr.builder(this).setTitle("Language").setSingleChoiceItems(Tr.all(this,labels),Math.max(0,current),(d,which)->{
+   Tr.setLanguage(this,modes[which]);d.dismiss();draw();loadAccount();
+  }).setNegativeButton("Cancel",null).show();
+ }
+ private void message(String text){if(!isFinishing()&&!isDestroyed())Tr.builder(this).setMessage(text).setPositiveButton("OK",null).show();}
  @Override protected void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);out.putString("local",pendingLocal);out.putString("writePair",pendingWriteTree);if(pendingSnapshot!=null)out.putString("snapshot",pendingSnapshot.getAbsolutePath());out.putString("snapshotName",pendingSnapshotName);}
  @Override protected void onDestroy(){for(Runnable remove:unwatch)remove.run();unwatch.clear();Store.prefs(this).unregisterOnSharedPreferenceChangeListener(historyListener);io.shutdown();super.onDestroy();}
 }

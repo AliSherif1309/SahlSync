@@ -344,6 +344,14 @@ class Handler(BaseHTTPRequestHandler):
         if target.exists():
             target = target.with_name(f"{int(time.time())}-{target.name}")
         shutil.move(str(path), str(target))
+        # Remove folders that are now empty, so a folder deleted on the phone disappears from the PC too.
+        parent = path.parent
+        while parent != self.folder and parent.is_relative_to(self.folder):
+            try:
+                parent.rmdir()
+            except OSError:
+                break
+            parent = parent.parent
         self.body(200, b"{}", "application/json")
 
     def receive(self, name):

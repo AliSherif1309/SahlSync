@@ -14,7 +14,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 APP = "Sahl Sync for PC"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 STATE = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "SahlSync"
 SETTINGS = STATE / "pc.json"
 PAIRING = STATE / "pairing.json"
@@ -75,7 +75,8 @@ class App:
         root.title(APP)
         root.configure(bg=BG)
         root.minsize(560, 600)
-        root.protocol("WM_DELETE_WINDOW", self.close)
+        root.protocol("WM_DELETE_WINDOW", self.hide)
+        self.tray = None
         style = ttk.Style()
         style.theme_use("clam")
         style.configure(".", background=BG, foreground=TEXT, fieldbackground=PANEL)
@@ -123,10 +124,70 @@ class App:
         self.copy = ttk.Button(root, text="Copy pairing code", command=self.copy_code)
         tk.Label(root, text="On the phone: Sahl Sync > Local Wi-Fi sync > Scan QR from PC. Keep the code private.",
                  bg=BG, fg=MUTED, wraplength=520, font=("Segoe UI", 9)).pack(side="bottom", pady=10)
+        self.start_tray()
         if minimized:
-            root.iconify()
+            if self.tray:
+                root.withdraw()
+            else:
+                root.iconify()
             if self.folders.size():
                 root.after(500, self.toggle)
+
+    # ----- system tray -----
+    def tray_image(self):
+        from PIL import Image, ImageDraw
+        image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        sharing = self.worker is not None
+        draw.ellipse((2, 2, 62, 62), fill=GOLD if sharing else "#2E4A42")
+        draw.ellipse((14, 14, 50, 50), fill=BG)
+        draw.arc((20, 18, 44, 34), 180, 360, fill=GOLD if sharing else TEXT, width=5)
+        draw.arc((20, 30, 44, 46), 0, 180, fill=GOLD if sharing else TEXT, width=5)
+        return image
+
+    def start_tray(self):
+        try:
+            import pystray
+        except ImportError:
+            return  # No tray support: closing the window quits.
+
+        def later(action):
+            return lambda *_args: self.root.after(0, action)
+
+        menu = pystray.Menu(
+            pystray.MenuItem("Open Sahl Sync", later(self.show), default=True),
+            pystray.MenuItem(lambda _item: "Stop sharing" if self.worker else "Start sharing", later(self.toggle)),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Quit", later(self.close)),
+        )
+        self.tray = pystray.Icon("SahlSync", self.tray_image(), APP, menu)
+        self.tray.run_detached()
+
+    def update_tray(self, text):
+        if self.tray:
+            try:
+                self.tray.icon = self.tray_image()
+                self.tray.title = f"{APP}: {text}"
+                self.tray.update_menu()
+            except Exception:
+                pass
+
+    def show(self):
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+
+    def hide(self):
+        if self.tray:
+            self.root.withdraw()
+            if not getattr(self, "told", False):
+                self.told = True
+                try:
+                    self.tray.notify("Sahl Sync keeps running in the tray. Right-click the icon to quit.", APP)
+                except Exception:
+                    pass
+        else:
+            self.close()
 
     def save(self):
         STATE.mkdir(parents=True, exist_ok=True)
@@ -196,6 +257,7 @@ class App:
                 self.root.after(500, self.wait_for_codes, attempt + 1)
             return
         self.status.configure(text=f"Sharing {len(self.codes)} folder(s) on {self.address.get()}. Select a folder to show its QR.", fg=TEXT)
+        self.update_tray(f"sharing {len(self.codes)} folder(s)")
         if not self.folders.curselection():
             self.folders.selection_set(0)
         self.show_code()
@@ -214,6 +276,7 @@ class App:
         self.worker, self.codes = None, {}
         self.start.configure(text="Start sharing")
         self.status.configure(text="Not sharing.", fg=MUTED)
+        self.update_tray("not sharing")
         self.qr.configure(image="")
         self.qr.image = None
         self.copy.pack_forget()
@@ -266,6 +329,11 @@ class App:
 
     def close(self):
         self.stop()
+        if self.tray:
+            try:
+                self.tray.stop()
+            except Exception:
+                pass
         self.root.destroy()
 
 
