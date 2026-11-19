@@ -1,4 +1,4 @@
-# Local Wi-Fi sync preview
+# Sync with your PC over Wi-Fi
 
 Sahl Sync can pair Android with multiple Windows folders for manual sync. Use copies of your files while testing.
 
@@ -20,6 +20,6 @@ Developers can still run `python desktop/sahl_sync_pc.py` (needs `cryptography` 
 
 Choose **Phone → PC**, **PC → Phone**, or **Two-way (newest wins)**. A one-way mode transfers only in the selected direction and skips a file when the destination has the newer copy. If timestamps match or are unavailable for files with different contents, Sahl Sync reports a conflict and preserves both. Update both the APK and Windows companion to use timestamp comparisons.
 
-Before replacing a file on either device, Sahl Sync saves the old copy on the phone. Open **Version history** to export an older version as a separate file. Deletions are not propagated. Empty folders do not sync. The preview supports up to 2 GB per file and 20,000 items per run.
+Before replacing a file on either device, Sahl Sync saves the old copy on the phone. Open **Version history** to export an older version as a separate file. In two-way mode, deletions sync too (turn this off in **Auto sync & options**): the phone keeps a copy in Version history, and the PC moves deleted files to `%LOCALAPPDATA%\SahlSync\Deleted`. Empty folders do not sync. The preview supports up to 2 GB per file and 20,000 items per run.
 
-The preview uses an encrypted connection checked against the PC certificate fingerprint from the pairing code. It is for private Wi-Fi. Transfers are manual. Select **Sync now** or **Sync all folders** after reconnecting to resume an interrupted file. Resume requires the updated Windows companion and matching file contents and destination version.
+The preview uses an encrypted connection checked against the PC certificate fingerprint from the pairing code. It is for private Wi-Fi. Turn on **Auto sync** (every 15 min, hourly, 6 h or daily) to sync in the background whenever the phone is on Wi-Fi. If the PC gets a new address, the phone finds it automatically. Interrupted files resume on the next sync. Resume requires the updated Windows companion and matching file contents and destination version.

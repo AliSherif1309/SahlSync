@@ -1,3 +1,10 @@
+## 1.0.0
+- First stable release.
+- Wi-Fi sync with your PC: deletion sync (with recovery copies on both sides), background Auto sync, and the phone finds the PC automatically when its address changes.
+- Faster: phone and PC remember file fingerprints, so unchanged files are not re-read; bigger transfer buffers; fewer full re-reads before uploads.
+- New options per folder: sync deletions on/off, how many older copies to keep, notifications on/off, every-15-minutes schedule.
+- Cleaner design: one main action per screen, outlined secondary buttons, folder cards, simpler wording.
+
 ## 0.9.0-beta.1
 - Edit backup settings can change the phone folder and the OneDrive folder (sync records reset safely).
 - New Windows app SahlSyncPC.exe: no Python or OpenSSL needed; shows a QR code per shared folder; start with Windows.

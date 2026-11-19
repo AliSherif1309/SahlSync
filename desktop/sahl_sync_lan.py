@@ -18,7 +18,9 @@ from urllib.parse import parse_qs, urlsplit
 
 LIMIT = 2048 * 1024 * 1024
 MAX_ITEMS = 20000
-BLOCK = 64 * 1024
+BLOCK = 256 * 1024
+HASHES = {}  # (path, size, mtime, inode) -> hash; skips re-reading unchanged PC files
+DELETED = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "SahlSync" / "Deleted"
 HASH = re.compile(r"[0-9a-f]{64}\Z")
 RESERVED = re.compile(r"(?i)(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\..*)?\Z")
 
@@ -48,11 +50,17 @@ def inspect_file(path):
     info = checked_stat(path)
     if not stat.S_ISREG(info.st_mode) or info.st_size > LIMIT or info.st_nlink > 1:
         raise ValueError("Unsupported file")
-    with path.open("rb") as stream:
-        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    cached = (str(path), info.st_size, info.st_mtime_ns, info.st_ino)
+    digest = HASHES.get(cached)
+    if digest is None:
+        with path.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
     after = checked_stat(path)
     if (info.st_size, info.st_mtime_ns, info.st_ino) != (after.st_size, after.st_mtime_ns, after.st_ino):
         raise ValueError("File changed during inspection")
+    if len(HASHES) > 200_000:
+        HASHES.clear()
+    HASHES[cached] = digest
     return {"hash": digest, "size": info.st_size, "modified": info.st_mtime_ns // 1_000_000}
 
 
@@ -129,6 +137,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self):
         self.handle_request(True)
 
+    def do_DELETE(self):
+        self.handle_request("delete")
+
     def handle_request(self, upload):
         supplied = self.headers.get("Authorization", "").encode("utf-8")
         routes = getattr(self.server, "shares", None)
@@ -156,6 +167,8 @@ class Handler(BaseHTTPRequestHandler):
             name = names["path"][0]
             if endpoint.path == "/v1/upload-offset" and not upload:
                 self.resume_status(name)
+            elif endpoint.path == "/v1/file" and upload == "delete":
+                self.remove(name)
             elif endpoint.path == "/v1/file" and upload:
                 if self.headers.get("X-Sahl-Total") is None:
                     self.receive(name)
@@ -316,6 +329,23 @@ class Handler(BaseHTTPRequestHandler):
         else:
             os.link(stage, path)
 
+    def remove(self, name):
+        """Deleted on the phone: move the PC copy to a recovery folder instead of erasing it."""
+        expected = self.headers.get("If-Match", "")
+        if not HASH.fullmatch(expected):
+            raise ValueError("Invalid delete")
+        path = destination(self.folder, name)
+        if inspect_file(path)["hash"] != expected:
+            self.send_error(412)
+            return
+        import time
+        target = DELETED / time.strftime("%Y-%m-%d") / self.folder.name / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            target = target.with_name(f"{int(time.time())}-{target.name}")
+        shutil.move(str(path), str(target))
+        self.body(200, b"{}", "application/json")
+
     def receive(self, name):
         length = int(self.headers.get("Content-Length", "-1"))
         digest = self.headers.get("X-Sahl-SHA256", "")
@@ -421,6 +451,29 @@ def identity(state, folder):
     return tls, fingerprint, token
 
 
+def start_discovery(port, fingerprint):
+    """Answers the phone's Wi-Fi broadcast so it can find this PC even after its address changes."""
+    import socket
+    import threading
+
+    def answer():
+        try:
+            listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(("", port))
+        except OSError:
+            return
+        while True:
+            try:
+                data, sender = listener.recvfrom(256)
+                if data.decode("ascii", "ignore").strip() == "SAHL-FIND " + fingerprint:
+                    listener.sendto(f"SAHL-HERE {port}".encode("ascii"), sender)
+            except OSError:
+                continue
+
+    threading.Thread(target=answer, daemon=True).start()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("folder", type=Path)
@@ -483,6 +536,7 @@ def main():
                 print(f"Pairing QR: {image}", flush=True)
             except ImportError:
                 print("Install qrcode[pil] to create a QR image, or use the pairing code.", flush=True)
+        start_discovery(args.port, fingerprint)
         try:
             server.serve_forever()
         except KeyboardInterrupt:

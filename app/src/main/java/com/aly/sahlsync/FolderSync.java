@@ -151,7 +151,7 @@ final class FolderSync {
    &&cloud.optLong("size",-1)==receipt.optLong("size",-2);
   boolean phoneUnchanged=phone!=null&&receipt!=null&&phone.modified>0
    &&phone.modified==receipt.optLong("phoneModified",-1)&&phone.size==receipt.optLong("size",-2);
-  switch(direction.deletion(phone!=null,cloud!=null,receipt!=null,phoneUnchanged,cloudUnchanged)){
+  switch(pair.optBoolean("syncDeletions",true)?direction.deletion(phone!=null,cloud!=null,receipt!=null,phoneUnchanged,cloudUnchanged):SyncDirection.Deletion.NONE){
    case DELETE_CLOUD: deleteCloud(drive,name,path,cloud,receipt);return;
    case DELETE_PHONE: deletePhone(drive,name,path,phone);return;
    default: break;
@@ -194,14 +194,14 @@ final class FolderSync {
     case UNCHANGED: remember(path,name,remote,localHash,phone.modified);unchanged++;return;
     case UPLOAD:
      BackupCancellation.check();
-     if(!localHash.equals(hash(phone.uri)))throw new LocalConflict("Phone file changed during sync.");
+     if(!stillSame(phone))throw new LocalConflict("Phone file changed during sync.");
      VersionedBackup.Item saved;
      if(remote==null)saved=backend.create(name,local);
      else{
       requireTag(remote);
       backend.archive(remote,remoteHash);
       BackupCancellation.check();
-      if(!localHash.equals(hash(phone.uri)))throw new LocalConflict("Phone file changed while the OneDrive copy was archived.");
+      if(!stillSame(phone))throw new LocalConflict("Phone file changed while the OneDrive copy was archived.");
       saved=backend.update(remote,local);
       if(!remote.id.equals(saved.id))throw new IOException("OneDrive file identity changed");
      }
@@ -221,6 +221,14 @@ final class FolderSync {
    JSONObject hashes=cloud.optJSONObject("file")==null?null:cloud.getJSONObject("file").optJSONObject("hashes");
    String expected=hashes==null?"":hashes.optString("quickXorHash");
    return !expected.isEmpty()&&cloud.optLong("size",-1)==local.length()&&expected.equals(QuickXorHash.of(local));
+  }catch(Exception error){return false;}
+ }
+
+ /** Cheap check that the phone file was not edited meanwhile (size and time), instead of re-reading it. */
+ private boolean stillSame(Local phone){
+  String[] columns={Document.COLUMN_SIZE,Document.COLUMN_LAST_MODIFIED};
+  try(android.database.Cursor row=resolver.query(phone.uri,columns,null,null,null)){
+   return row!=null&&row.moveToFirst()&&row.getLong(0)==phone.size&&row.getLong(1)==phone.modified;
   }catch(Exception error){return false;}
  }
 

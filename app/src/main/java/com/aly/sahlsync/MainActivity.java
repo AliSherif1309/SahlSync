@@ -211,19 +211,18 @@ public final class MainActivity extends Activity {
   scroll.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,new int[]{SahlTheme.TOP,SahlTheme.BOTTOM}));
   scroll.setOnApplyWindowInsetsListener((v,insets)->{v.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());return insets;});
   content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);content.setFocusableInTouchMode(true);int p=SahlTheme.dp(this,20);content.setPadding(p,p,p,p);scroll.addView(content);setContentView(scroll);content.requestFocus();
-  content.addView(SahlTheme.label(this,"SAHL  /  SYNC",14,SahlTheme.GOLD));
-  content.addView(SahlTheme.label(this,"Your folders. Backed up.",30,SahlTheme.TEXT));
-  content.addView(SahlTheme.label(this,"OneDrive backup - Early preview",15,SahlTheme.MUTED));
+  content.addView(SahlTheme.label(this,"Sahl Sync",30,SahlTheme.TEXT));
+  content.addView(SahlTheme.label(this,"Keep your phone, OneDrive and PC in sync.",15,SahlTheme.MUTED));
   LinearLayout connect=card("Microsoft accounts");status=SahlTheme.label(this,Auth.configured()?"Loading account...":"Microsoft sign-in setup is pending for this build.",16,SahlTheme.MUTED);connect.addView(status);
   connectButton=SahlTheme.button(this,"Connect OneDrive",this::connect);connect.addView(connectButton);
-  disconnectButton=SahlTheme.button(this,"Disconnect an account",this::disconnect);connect.addView(disconnectButton);updateAccountButtons();
-  connect.addView(SahlTheme.button(this,"Background & notifications",this::showBackgroundSetup));
-  Button updates=SahlTheme.button(this,"Check for updates",()->{});
+  disconnectButton=SahlTheme.secondary(this,"Disconnect an account",this::disconnect);connect.addView(disconnectButton);updateAccountButtons();
+  connect.addView(SahlTheme.secondary(this,"Background & notifications",this::showBackgroundSetup));
+  Button updates=SahlTheme.secondary(this,"Check for updates",()->{});
   updates.setOnClickListener(view->checkForUpdates(updates));
   connect.addView(updates);
-  content.addView(SahlTheme.button(this,"Local Wi-Fi sync (preview)",()->startActivity(new Intent(this,LanActivity.class))));
+  content.addView(SahlTheme.button(this,"Sync with my PC (Wi-Fi)",()->startActivity(new Intent(this,LanActivity.class))));
   LinearLayout pairs=card("Folder backups");
-  pairs.addView(SahlTheme.label(this,"Choose upload only, download only, or two-way sync. Two-way sync uses the newest modified copy and syncs deletions. Replaced and deleted files are kept in Version history (newest "+OneDriveBackup.KEEP_VERSIONS+" copies per file). Limit: "+BackupRules.MAX_FILE_MIB/1024+" GB per file.",15,SahlTheme.MUTED));
+  pairs.addView(SahlTheme.label(this,"Tap a folder to sync it or change its settings. Replaced and deleted files are kept in Version history.",14,SahlTheme.MUTED));
   pairs.addView(SahlTheme.button(this,"Add folder backup",()->{
    if(accounts.isEmpty()){message("Connect OneDrive first.");return;}
    pickPhoneFolder(42,null);
@@ -243,16 +242,18 @@ public final class MainActivity extends Activity {
     String title=pair.getString("name");
     LinearLayout entry=new LinearLayout(this);
     entry.setOrientation(LinearLayout.VERTICAL);
-    entry.setPadding(0,SahlTheme.dp(this,12),0,0);
+    int inner=SahlTheme.dp(this,12);entry.setPadding(inner,inner,inner,inner);
+    entry.setBackground(SahlTheme.rounded(this,android.graphics.Color.parseColor("#183029")));
+    LinearLayout.LayoutParams gap=new LinearLayout.LayoutParams(-1,-2);gap.topMargin=SahlTheme.dp(this,10);entry.setLayoutParams(gap);
     pairs.addView(entry);
     searchable.put(entry,(title+" "+pair.getString("remoteName")).toLowerCase(Locale.ROOT));
     LinearLayout actions=new LinearLayout(this);
     actions.setOrientation(LinearLayout.VERTICAL);
     actions.setVisibility(id.equals(openFolder)?View.VISIBLE:View.GONE);
-    Button heading=SahlTheme.button(this,"",()->{});
+    Button heading=SahlTheme.secondary(this,"",()->{});
     heading.setAllCaps(false);
     heading.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);
-    heading.setText(title+" / "+(id.equals(openFolder)?"Hide controls":"Show controls"));
+    heading.setText(title+(id.equals(openFolder)?"  ▴":"  ▾"));
     heading.setOnClickListener(view->{
      boolean expanded=actions.getVisibility()!=View.VISIBLE;
      for(View other:searchable.keySet()){
@@ -260,12 +261,12 @@ public final class MainActivity extends Activity {
        LinearLayout row=(LinearLayout)other;
        row.getChildAt(row.getChildCount()-1).setVisibility(View.GONE);
        Button otherHeading=(Button)row.getChildAt(0);
-       otherHeading.setText(otherHeading.getText().toString().replaceFirst(" / Hide controls$"," / Show controls"));
+       otherHeading.setText(otherHeading.getText().toString().replaceFirst("  ▴$","  ▾"));
       }
      }
      openFolder=expanded?id:null;
      actions.setVisibility(expanded?View.VISIBLE:View.GONE);
-     heading.setText(title+" / "+(expanded?"Hide controls":"Show controls"));
+     heading.setText(title+(expanded?"  ▴":"  ▾"));
     });
     entry.addView(heading);
     entry.addView(SahlTheme.label(this,directionLabel(pair)+" / "+pair.getString("remoteName")+"\n"+(pair.optBoolean("unmetered")?"Unmetered network":"Any network")+(pair.optBoolean("charging")?" / Charging":"")+(pair.optBoolean("daily")||pair.optInt("scheduleMode")!=0?" / Scheduled":" / Manual"),14,SahlTheme.MUTED));
@@ -275,14 +276,14 @@ public final class MainActivity extends Activity {
     updateOwnerLabel(owner,pair);
     TextView manual=SahlTheme.label(this,"",14,SahlTheme.MUTED),scheduled=SahlTheme.label(this,"",14,SahlTheme.MUTED);
     entry.addView(manual);entry.addView(scheduled);entry.addView(actions);
-    Button backup=SahlTheme.button(this,"Back up now / Retry",()->BackupWorker.enqueue(this,pair,false));actions.addView(backup);
-    Button cancel=SahlTheme.button(this,"Cancel current backup",()->cancelBackup(pair));actions.addView(cancel);
+    Button backup=SahlTheme.button(this,"Sync now",()->BackupWorker.enqueue(this,pair,false));actions.addView(backup);
+    Button cancel=SahlTheme.secondary(this,"Stop",()->cancelBackup(pair));actions.addView(cancel);
     watchWork("manual-"+pair.optString("id"),manual,false,false);
     String generation=pair.optString("scheduleGeneration");
     watchWork(generation.isEmpty()?"scheduled-"+id:generation,scheduled,true,!generation.isEmpty());
-    actions.addView(SahlTheme.button(this,"Edit backup settings",()->editPair(pair)));
-    actions.addView(SahlTheme.button(this,"Backup activity",()->showFolderHistory(pair)));
-    actions.addView(SahlTheme.button(this,"Version history",()->showVersionFiles(pair)));
+    actions.addView(SahlTheme.secondary(this,"Settings",()->editPair(pair)));
+    actions.addView(SahlTheme.secondary(this,"Activity",()->showFolderHistory(pair)));
+    actions.addView(SahlTheme.secondary(this,"Version history",()->showVersionFiles(pair)));
 
    }
    if(all.length()>1){
@@ -310,8 +311,8 @@ public final class MainActivity extends Activity {
    }
   }catch(Exception e){message("Could not load folder backups.");}
   LinearLayout log=card("History");history=SahlTheme.label(this,"",15,SahlTheme.MUTED);refreshHistory();
-  log.addView(SahlTheme.button(this,"Refresh history",this::refreshHistory));
-  log.addView(SahlTheme.button(this,"View full history",()->{
+  log.addView(SahlTheme.secondary(this,"Refresh history",this::refreshHistory));
+  log.addView(SahlTheme.secondary(this,"View full history",()->{
    ScrollView list=new ScrollView(this);
    list.addView(SahlTheme.label(this,historyText(50),15,SahlTheme.TEXT));
    new AlertDialog.Builder(this).setTitle("Backup history").setView(list).setPositiveButton("Close",null).show();
@@ -382,15 +383,25 @@ public final class MainActivity extends Activity {
    CheckBox charging=new CheckBox(this);charging.setText("Only while charging");charging.setChecked(pair.optBoolean("charging"));form.addView(charging);
    form.addView(SahlTheme.label(this,"Folders",16,SahlTheme.TEXT));
    final AlertDialog[] holder=new AlertDialog[1];
-   form.addView(SahlTheme.button(this,"Change phone folder",()->{
+   form.addView(SahlTheme.secondary(this,"Change phone folder",()->{
     editingPair=original.optString("id");if(holder[0]!=null)holder[0].dismiss();
     pickPhoneFolder(45,Uri.parse(pair.optString("local")));
    }));
-   form.addView(SahlTheme.button(this,"Change OneDrive folder ("+pair.optString("remoteName")+")",()->{
+   form.addView(SahlTheme.secondary(this,"Change OneDrive folder ("+pair.optString("remoteName")+")",()->{
     editingPair=original.optString("id");if(holder[0]!=null)holder[0].dismiss();
     selectAccount("Choose a OneDrive account",true,owner->chooseRemote("root","OneDrive",owner));
    }));
    Spinner direction=addDirection(form,pair.optString("direction","upload"));
+   CheckBox deletions=new CheckBox(this);deletions.setText("Sync deletions (two-way). Deleted files stay in Version history.");
+   deletions.setChecked(pair.optBoolean("syncDeletions",true));form.addView(deletions);
+   form.addView(SahlTheme.label(this,"Older copies to keep per file",15,SahlTheme.TEXT));
+   Spinner keep=new Spinner(this);
+   int[] keepValues={3,10,30,100,0};
+   keep.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,new String[]{"3","10","30","100","All (no cleanup)"}));
+   for(int k=0;k<keepValues.length;k++)if(keepValues[k]==pair.optInt("keepVersions",10))keep.setSelection(k);
+   form.addView(keep);
+   CheckBox notify=new CheckBox(this);notify.setText("Notify me when this folder finishes syncing");
+   notify.setChecked(pair.optBoolean("notify",true));form.addView(notify);
    ScheduleEditor schedule=new ScheduleEditor(this,form,pair);
    ScrollView scroll=new ScrollView(this);scroll.addView(form);
    AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Edit backup settings").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
@@ -398,7 +409,8 @@ public final class MainActivity extends Activity {
    dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
     try{String title=name.getText().toString().trim();if(title.isEmpty()){name.setError("Enter a backup name");return;}
      if(!applyDirection(pair,direction))return;
-     pair.put("name",title).put("exclude",exclude.getText().toString()).put("unmetered",wifi.isChecked()).put("charging",charging.isChecked());
+     pair.put("name",title).put("exclude",exclude.getText().toString()).put("unmetered",wifi.isChecked()).put("charging",charging.isChecked())
+      .put("syncDeletions",deletions.isChecked()).put("keepVersions",keepValues[keep.getSelectedItemPosition()]).put("notify",notify.isChecked());
      long due=schedule.apply(pair);
      synchronized(BackupSchedule.class){
       Store.update(this,pair);BackupSchedule.cancel(this,pair.getString("id"));

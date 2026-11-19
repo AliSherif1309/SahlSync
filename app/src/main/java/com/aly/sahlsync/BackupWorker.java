@@ -59,6 +59,7 @@ public final class BackupWorker extends Worker {
      }else if(getInputData().getBoolean("legacyDaily",false)&&!pair.optBoolean("daily"))return Result.success();
     }
     folderName=pair.optString("name","Sahl Sync");
+    notifyEnabled=pair.optBoolean("notify",true);
     if(!isScheduled())startManualForeground(c);
     BackupCancellation.check();
     Graph graph=Auth.graph(Auth.open(c),pair.getString("account"));
@@ -160,8 +161,9 @@ public final class BackupWorker extends Worker {
   }
  }
 
+ private boolean notifyEnabled=true;
  private void notifyResult(String summary){
-  if(isStopped())return;
+  if(isStopped()||!notifyEnabled)return;
   BackupNotifications.finished(getApplicationContext(),getInputData().getString("pair"),folderName,isScheduled(),summary);
  }
 

@@ -19,7 +19,13 @@ final class LanFolderSync {
  private final Map<String,LocalFile> phoneFiles=new TreeMap<>();
  private final Map<String,String> names=new HashMap<>();
  private final Consumer<String> progress;
- private int visited,skipped;
+ private int visited,skipped,deleted;
+ private boolean syncDeletions=true;
+ private JSONObject lastState=new JSONObject(),hashCache=new JSONObject(),newCache=new JSONObject();
+ private final JSONObject newState=new JSONObject();
+
+ LanFolderSync deletions(boolean enabled){syncDeletions=enabled;return this;}
+ private android.content.SharedPreferences store(){return context.getSharedPreferences("lan-sync-state",Context.MODE_PRIVATE);}
 
  LanFolderSync(Context context,LanPeer peer,Mode mode,String archiveKey,Consumer<String> progress){
   this.context=context;
@@ -38,6 +44,8 @@ final class LanFolderSync {
 
  String run(Uri uri)throws Exception{
   versions=new LanVersions(context,archiveKey,uri.toString());
+  try{lastState=new JSONObject(store().getString("state-"+archiveKey,"{}"));}catch(Exception ignored){lastState=new JSONObject();}
+  try{hashCache=new JSONObject(store().getString("hashes-"+archiveKey,"{}"));}catch(Exception ignored){hashCache=new JSONObject();}
   DocumentFile folder=DocumentFile.fromTreeUri(context,uri);
   if(folder==null||!folder.isDirectory()||!FolderSync.writable(context.getContentResolver(),uri))
    throw new IOException("Choose a writable phone folder again.");
@@ -66,11 +74,17 @@ final class LanFolderSync {
    String local=phone==null?"":phone.hash,remote=pc==null?"":pc.getString("hash");
    if(pc!=null&&(!remote.matches("[0-9a-f]{64}")||pc.getLong("size")<0))throw new IOException("Invalid PC file inventory.");
    try{
+    String last=lastState.optString(path,"");
+    if(mode==Mode.TWO_WAY&&syncDeletions&&!last.isEmpty()){
+     if(phone==null&&pc!=null&&remote.equals(last)){deletePc(path,remote,pc.getLong("size"));deleted++;checked++;continue;}
+     if(pc==null&&phone!=null&&local.equals(last)){deletePhone(path,phone);deleted++;checked++;continue;}
+    }
+    if(!last.isEmpty())newState.put(path,last);
     switch(action(mode,local,remote,phone==null?0:phone.modified,pc==null?0:pc.optLong("modified"))){
-     case UNCHANGED: unchanged++;break;
+     case UNCHANGED: unchanged++;newState.put(path,local);break;
      case SKIP: skipped++;break;
-     case SEND: upload(path,phone,remote,pc==null?0:pc.getLong("size"));sent++;break;
-     case RECEIVE: download(folder,path,local,remote,pc.getLong("size"));received++;break;
+     case SEND: upload(path,phone,remote,pc==null?0:pc.getLong("size"));sent++;newState.put(path,phone.hash);break;
+     case RECEIVE: download(folder,path,local,remote,pc.getLong("size"));received++;newState.put(path,remote);break;
      case CONFLICT: throw new LanPeer.Changed();
     }
    }catch(LanPeer.Changed conflict){
@@ -79,7 +93,9 @@ final class LanFolderSync {
    }
    checked++;
   }
-  String summary=checked+" files checked · "+(sent+received)+" synced ("+sent+" sent, "+received+" received)"
+  store().edit().putString("state-"+archiveKey,newState.toString()).putString("hashes-"+archiveKey,newCache.toString()).apply();
+  String summary=checked+" files checked · "+(sent+received)+" synced ("+sent+" sent, "+received+" received"
+   +(deleted>0?", "+deleted+" deleted":"")+")"
    +"\n"+unchanged+" unchanged · "+skipped+" skipped · "+conflicts+" conflicts";
   if(!examples.isEmpty())summary+="\nReview on both devices:\n"+String.join("\n",examples);
   return summary;
@@ -131,11 +147,31 @@ final class LanFolderSync {
     else{
      if(rows.getLong(3)>BackupRules.MAX_FILE_BYTES){skipped++;continue;}
      try{
-      if(phoneFiles.put(path,new LocalFile(item,hash(item,null),rows.getLong(4)))!=null)throw new IOException("Duplicate file name in phone folder.");
+      String signature=rows.getLong(3)+":"+rows.getLong(4);
+      JSONObject cached=hashCache.optJSONObject(path);
+      String digest=cached!=null&&rows.getLong(4)>0&&signature.equals(cached.optString("s"))?cached.optString("h"):hash(item,null);
+      newCache.put(path,new JSONObject().put("s",signature).put("h",digest));
+      if(phoneFiles.put(path,new LocalFile(item,digest,rows.getLong(4)))!=null)throw new IOException("Duplicate file name in phone folder.");
      }catch(BackupRules.FileTooLarge error){skipped++;}
     }
    }
   }
+ }
+
+ /** Deleted on the phone: keep a copy in Version history, then the PC moves its file to a recovery folder. */
+ private void deletePc(String path,String remote,long size)throws Exception{
+  BackupCancellation.check();
+  versions.save(path,"PC",remote,copy->peer.download(path,copy,remote,size));
+  peer.delete(path,remote);
+ }
+
+ /** Deleted on the PC: keep a copy in Version history, then remove the phone file. */
+ private void deletePhone(String path,LocalFile phone)throws Exception{
+  BackupCancellation.check();
+  versions.save(path,"Phone",phone.hash,copy->{
+   try(OutputStream out=new FileOutputStream(copy)){if(!phone.hash.equals(hash(phone.document,out)))throw new LanPeer.Changed();}
+  });
+  if(!phone.document.delete())throw new IOException("Could not remove the phone file.");
  }
 
  private void registerName(String path)throws IOException{
