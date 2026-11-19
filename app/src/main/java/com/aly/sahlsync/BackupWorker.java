@@ -13,7 +13,7 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 public final class BackupWorker extends Worker {
- private int uploaded,unchanged,excluded,conflicts,visited;
+ private int uploaded,downloaded,unchanged,excluded,conflicts,visited;
  private String current="Connecting";
  private String folderName="Sahl Sync";
  private void progress(){progress(0,0,false);}
@@ -62,11 +62,22 @@ public final class BackupWorker extends Worker {
     if(local==null||!local.isDirectory()||!local.canRead())throw new IOException("Local folder permission is unavailable; select it again");
     Graph graph=new Graph(auth.getAccessToken());
     graph.enableResumableUploads(c,getInputData().getString("pair"),this::progress);
-    walk(c,graph,local.getUri(),pair.getString("remote"),"",pair,0);
+    if(SyncDirection.from(pair.optString("direction"))==SyncDirection.UPLOAD){
+     walk(c,graph,local.getUri(),pair.getString("remote"),"",pair,0);
+    }else{
+     FolderSync sync=new FolderSync(c,graph,pair,path->{current=path;progress();});
+     sync.run(Uri.parse(pair.getString("local")));
+     uploaded=sync.uploaded;
+     downloaded=sync.downloaded;
+     unchanged=sync.unchanged;
+     excluded=sync.excluded;
+     conflicts=sync.conflicts;
+    }
+    String counts=uploaded+" uploaded, "+(downloaded==0?"":downloaded+" downloaded, ")+unchanged+" unchanged";
     BackupCancellation.check();
-    Store.history(c,getInputData().getString("pair"),(getInputData().getString("scheduleGeneration")!=null?"Scheduled backup finished: ":"Backup finished: ")+uploaded+" uploaded, "+unchanged+" unchanged, "+excluded+" excluded, "+conflicts+" conflicts.");
-    notifyResult(uploaded+" uploaded, "+unchanged+" unchanged, "+conflicts+" conflicts.");
-    return conflicts==0?Result.success(new Data.Builder().putString("summary","Completed: "+uploaded+" uploaded, "+unchanged+" unchanged").build()):Result.failure(new Data.Builder().putString("summary",conflicts+" conflicts - see History").build());
+    Store.history(c,getInputData().getString("pair"),(getInputData().getString("scheduleGeneration")!=null?"Scheduled backup finished: ":"Backup finished: ")+counts+", "+excluded+" excluded, "+conflicts+" conflicts.");
+    notifyResult(counts+", "+conflicts+" conflicts.");
+    return conflicts==0?Result.success(new Data.Builder().putString("summary","Completed: "+counts).build()):Result.failure(new Data.Builder().putString("summary",conflicts+" conflicts - see History").build());
    }catch(Graph.HttpError e){
     if(isStopped())return Result.failure();
     boolean retry=e.status==429||e.status>=500;
@@ -140,7 +151,7 @@ public final class BackupWorker extends Worker {
     if(isStopped()||Thread.currentThread().isInterrupted())throw new InterruptedException();
     if(++visited>5000)throw new IOException("Alpha limit: 5000 items per run");
     String name=cursor.getString(1),relative=path+name;
-    if(relative.equals(OneDriveBackup.HISTORY)||relative.startsWith(OneDriveBackup.HISTORY+"/")||BackupRules.excluded(relative,pair.optString("exclude"))){excluded++;continue;}
+    if(FolderSync.reserved(name)||BackupRules.excluded(relative,pair.optString("exclude"))){excluded++;continue;}
     current=relative;progress();BackupRules.validateName(name);
     Uri uri=android.provider.DocumentsContract.buildDocumentUriUsingTree(source,cursor.getString(0));
     if(android.provider.DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(2))){
