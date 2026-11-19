@@ -13,30 +13,29 @@ final class LanFolderSync {
  private static final int MAX_ITEMS=5000;
  private final Context context;
  private final LanPeer peer;
+ private final Mode mode;
+ private LanVersions versions;
  private final Map<String,LocalFile> phoneFiles=new TreeMap<>();
  private final Map<String,String> names=new HashMap<>();
  private final Consumer<String> progress;
  private int visited,skipped;
 
- LanFolderSync(Context context,LanPeer peer,Consumer<String> progress){
+ LanFolderSync(Context context,LanPeer peer,Mode mode,Consumer<String> progress){
   this.context=context;
   this.peer=peer;
+  this.mode=mode;
   this.progress=progress;
- }
-
- static final class Result {
-  final JSONObject baseline;
-  final String summary;
-  Result(JSONObject baseline,String summary){this.baseline=baseline;this.summary=summary;}
  }
 
  private static final class LocalFile {
   final DocumentFile document;
   final String hash;
-  LocalFile(DocumentFile document,String hash){this.document=document;this.hash=hash;}
+  final long modified;
+  LocalFile(DocumentFile document,String hash,long modified){this.document=document;this.hash=hash;this.modified=modified;}
  }
 
- Result run(Uri uri,JSONObject baseline)throws Exception{
+ String run(Uri uri)throws Exception{
+  versions=new LanVersions(context,peer.identity,uri.toString());
   DocumentFile folder=DocumentFile.fromTreeUri(context,uri);
   if(folder==null||!folder.isDirectory()||!FolderSync.writable(context.getContentResolver(),uri))
    throw new IOException("Choose a writable phone folder again.");
@@ -54,7 +53,6 @@ final class LanFolderSync {
    paths.add(path);
   }
   if(paths.size()>MAX_ITEMS)throw new IOException("Combined folders have more than 5,000 files.");
-  JSONObject updated=new JSONObject(baseline.toString());
   int sent=0,received=0,checked=0,unchanged=0,conflicts=0;
   List<String> examples=new ArrayList<>();
   for(String path:paths){
@@ -64,12 +62,12 @@ final class LanFolderSync {
    JSONObject pc=pcFiles.optJSONObject(path);
    String local=phone==null?"":phone.hash,remote=pc==null?"":pc.getString("hash");
    if(pc!=null&&(!remote.matches("[0-9a-f]{64}")||pc.getLong("size")<0))throw new IOException("Invalid PC file inventory.");
-   String previous=baseline.optString(path);
    try{
-    switch(action(local,remote,previous)){
-     case UNCHANGED: updated.put(path,local);unchanged++;break;
-     case SEND: upload(path,phone,remote);updated.put(path,local);sent++;break;
-     case RECEIVE: download(folder,path,local,remote,pc.getLong("size"));updated.put(path,remote);received++;break;
+    switch(action(mode,local,remote,phone==null?0:phone.modified,pc==null?0:pc.optLong("modified"))){
+     case UNCHANGED: unchanged++;break;
+     case SKIP: skipped++;break;
+     case SEND: upload(path,phone,remote,pc==null?0:pc.getLong("size"));sent++;break;
+     case RECEIVE: download(folder,path,local,remote,pc.getLong("size"));received++;break;
      case CONFLICT: throw new LanPeer.Changed();
     }
    }catch(LanPeer.Changed conflict){
@@ -81,18 +79,29 @@ final class LanFolderSync {
   String summary=checked+" files checked · "+(sent+received)+" synced ("+sent+" sent, "+received+" received)"
    +"\n"+unchanged+" unchanged · "+skipped+" skipped · "+conflicts+" conflicts";
   if(!examples.isEmpty())summary+="\nReview on both devices:\n"+String.join("\n",examples);
-  return new Result(updated,summary);
+  return summary;
  }
 
- enum Action { UNCHANGED, SEND, RECEIVE, CONFLICT }
+ enum Mode {
+  SEND_ONLY("Phone → PC"), RECEIVE_ONLY("PC → Phone"), TWO_WAY("Two-way (newest wins)");
+  final String label;
+  Mode(String label){this.label=label;}
 
- static Action action(String phone,String pc,String lastSynced){
+  static Mode from(String name){
+   for(Mode mode:values())if(mode.name().equals(name))return mode;
+   return TWO_WAY;
+  }
+ }
+
+ enum Action { UNCHANGED, SEND, RECEIVE, SKIP, CONFLICT }
+
+ static Action action(Mode mode,String phone,String pc,long phoneModified,long pcModified){
   if(phone.equals(pc))return Action.UNCHANGED;
-  if(pc.isEmpty())return Action.SEND;
-  if(phone.isEmpty())return Action.RECEIVE;
-  if(pc.equals(lastSynced))return Action.SEND;
-  if(phone.equals(lastSynced))return Action.RECEIVE;
-  return Action.CONFLICT;
+  if(pc.isEmpty())return mode==Mode.RECEIVE_ONLY?Action.SKIP:Action.SEND;
+  if(phone.isEmpty())return mode==Mode.SEND_ONLY?Action.SKIP:Action.RECEIVE;
+  if(phoneModified<=0||pcModified<=0||phoneModified==pcModified)return Action.CONFLICT;
+  if(phoneModified>pcModified)return mode==Mode.RECEIVE_ONLY?Action.SKIP:Action.SEND;
+  return mode==Mode.SEND_ONLY?Action.SKIP:Action.RECEIVE;
  }
 
  private void scan(DocumentFile folder,String prefix,int depth)throws Exception{
@@ -101,7 +110,7 @@ final class LanFolderSync {
   Uri parent=folder.getUri();
   Uri children=android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(parent,
    android.provider.DocumentsContract.getDocumentId(parent));
-  String[] columns={"document_id","_display_name","mime_type","_size"};
+  String[] columns={"document_id","_display_name","mime_type","_size",android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED};
   try(android.database.Cursor rows=context.getContentResolver().query(children,columns,null,null,null)){
    if(rows==null)throw new IOException("Could not read the phone folder.");
    while(rows.moveToNext()){
@@ -119,7 +128,7 @@ final class LanFolderSync {
     else{
      if(rows.getLong(3)>BackupRules.MAX_FILE_BYTES){skipped++;continue;}
      try{
-      if(phoneFiles.put(path,new LocalFile(item,hash(item,null)))!=null)throw new IOException("Duplicate file name in phone folder.");
+      if(phoneFiles.put(path,new LocalFile(item,hash(item,null),rows.getLong(4)))!=null)throw new IOException("Duplicate file name in phone folder.");
      }catch(BackupRules.FileTooLarge error){skipped++;}
     }
    }
@@ -152,12 +161,13 @@ final class LanFolderSync {
   }
  }
 
- private void upload(String path,LocalFile phone,String remote)throws Exception{
+ private void upload(String path,LocalFile phone,String remote,long remoteSize)throws Exception{
   File source=File.createTempFile("lan-send-",".tmp",context.getCacheDir());
   try{
    try(OutputStream output=new FileOutputStream(source)){
     if(!phone.hash.equals(hash(phone.document,output)))throw new LanPeer.Changed();
    }
+   if(!remote.isEmpty())versions.save(path,"PC",remote,copy->peer.download(path,copy,remote,remoteSize));
    peer.upload(path,source,phone.hash,remote.isEmpty()?"missing":remote);
   }finally{source.delete();}
  }
@@ -174,11 +184,11 @@ final class LanFolderSync {
     if(child==null||!child.isDirectory()||!parts[i].equals(child.getName()))throw new LanPeer.Changed();
     folder=child;
    }
-   publish(folder,parts[parts.length-1],source,local,remote);
+   publish(folder,path,parts[parts.length-1],source,local,remote);
   }finally{source.delete();}
  }
 
- private void publish(DocumentFile folder,String name,File source,String local,String remote)throws Exception{
+ private void publish(DocumentFile folder,String path,String name,File source,String local,String remote)throws Exception{
   DocumentFile temporary=folder.createFile("application/octet-stream","sahl-sync-staging-"+UUID.randomUUID());
   if(temporary==null)throw new IOException("Could not stage a phone file.");
   DocumentFile prior=null;
@@ -193,11 +203,18 @@ final class LanFolderSync {
    if(current==null&&!local.isEmpty())throw new LanPeer.Changed();
    BackupCancellation.check();
    if(current!=null){
+    versions.save(path,"Phone",local,copy->{
+     try(OutputStream out=new FileOutputStream(copy)){
+      if(!local.equals(hash(current,out)))throw new LanPeer.Changed();
+     }
+    });
+    if(!local.equals(hash(current,null)))throw new LanPeer.Changed();
     if(!current.renameTo("sahl-sync-previous-"+UUID.randomUUID()+"-"+name))throw new IOException("Could not save the previous phone copy.");
     prior=current;
    }
    if(!temporary.renameTo(name)||!name.equals(temporary.getName()))throw new IOException("Could not publish the downloaded file.");
    published=true;
+   if(prior!=null)prior.delete();
   }finally{
    if(!published){
     temporary.delete();

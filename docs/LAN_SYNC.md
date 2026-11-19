@@ -1,6 +1,6 @@
 # Local Wi-Fi sync preview
 
-Sahl Sync can pair Android with one Windows folder for manual two-way sync. Use copies of your files while testing.
+Sahl Sync can pair Android with one Windows folder for manual sync. Use copies of your files while testing.
 
 ## On the PC
 
@@ -16,8 +16,10 @@ Substitute your PC address and test folder. Keep that terminal open and allow in
 
 1. Open **Local Wi-Fi sync (preview)** in Sahl Sync.
 2. Enter the PC's pairing code. If you use the optional QR, scan it with your phone’s camera or QR reader and paste the decoded text. Tap **Save** to verify the connection.
-3. Choose a test folder on the phone, then tap **Sync now**.
+3. Choose a test folder on the phone, select a **Sync mode**, then tap **Sync now**.
 
-The app compares file contents. New files transfer either way. After the first sync, edits made on one device transfer to the other. When both copies differ and both have changed, the app lists a conflict and keeps both originals. Deletions are never sent to the other device, so a missing copy can be restored from the surviving file. Empty folders do not sync. The preview supports up to 224 MiB per file and 5,000 items per run.
+Choose **Phone → PC**, **PC → Phone**, or **Two-way (newest wins)**. A one-way mode transfers only in the selected direction and skips a file when the destination has the newer copy. If timestamps match or are unavailable for files with different contents, Sahl Sync reports a conflict and preserves both. Update both the APK and Windows companion to use timestamp comparisons.
+
+Before replacing a file on either device, Sahl Sync saves the old copy on the phone. Open **Version history** to export an older version as a separate file. Deletions are not propagated. Empty folders do not sync. The preview supports up to 224 MiB per file and 5,000 items per run.
 
 The preview uses an encrypted connection checked against the PC certificate fingerprint from the pairing code. It is for private Wi-Fi. Transfers are manual and interrupted files can be retried from the start.

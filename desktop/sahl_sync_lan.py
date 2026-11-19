@@ -53,7 +53,7 @@ def inspect_file(path):
     after = checked_stat(path)
     if (info.st_size, info.st_mtime_ns, info.st_ino) != (after.st_size, after.st_mtime_ns, after.st_ino):
         raise ValueError("File changed during inspection")
-    return {"hash": digest, "size": info.st_size}
+    return {"hash": digest, "size": info.st_size, "modified": info.st_mtime_ns // 1_000_000}
 
 
 def inventory(root):
