@@ -222,6 +222,7 @@ public final class MainActivity extends Activity {
   connect.addView(updates);
   connect.addView(SahlTheme.secondary(this,"Language / اللغة",this::chooseLanguage));
   content.addView(SahlTheme.button(this,"Sync with my PC (Wi-Fi)",()->startActivity(new Intent(this,LanActivity.class))));
+  content.addView(SahlTheme.secondary(this,"Messages & apps backup",()->startActivity(new Intent(this,PhoneDataActivity.class))));
   LinearLayout pairs=card("Folder backups");
   pairs.addView(SahlTheme.label(this,"Tap a folder to sync it or change its settings. Replaced and deleted files are kept in Version history.",14,SahlTheme.MUTED));
   pairs.addView(SahlTheme.button(this,"Add folder backup",()->{
