@@ -342,14 +342,18 @@ public final class MainActivity extends Activity {
       transfer=String.format(Locale.getDefault(),"\n%s: %.1f / %.1f MiB (%d%%)",
        verb,accepted/1048576.0,total/1048576.0,accepted*100/total);
      }
-     label.setText(prefix+"Running - "+file+transfer+"\n"+progress.getInt("uploaded",0)
-      +" uploaded, "+progress.getInt("unchanged",0)+" unchanged, "+progress.getInt("conflicts",0)+" conflicts");
+     int uploaded=progress.getInt("uploaded",0),downloaded=progress.getInt("downloaded",0);
+     String totals=progress.hasKeyWithValueOfType("filesChecked",Integer.class)
+      ?"Files checked so far: "+progress.getInt("filesChecked",0)+" / Synced: "+(uploaded+downloaded)+"\n":"";
+     label.setText(prefix+"Running - "+file+transfer+"\n"+totals+uploaded+" uploaded, "+downloaded
+      +" downloaded, "+progress.getInt("unchanged",0)+" unchanged, "+progress.getInt("conflicts",0)+" conflicts");
      break;
     case ENQUEUED: label.setText(prefix+(timed?(selected.getNextScheduleTimeMillis()>System.currentTimeMillis()
       ?"Next: "+java.text.DateFormat.getDateTimeInstance().format(new Date(selected.getNextScheduleTimeMillis()))
       :"Due / waiting for Android and selected conditions"):periodic?"Scheduled / waiting for Android and selected conditions":"Queued / waiting for network, battery or another backup")+(selected.getRunAttemptCount()>0?" - retry pending":""));break;
     case SUCCEEDED: label.setText(prefix+selected.getOutputData().getString("summary"));break;
-    case FAILED: label.setText(prefix+"Failed or conflicts - see Backup activity; tap Back up now / Retry");break;
+    case FAILED: label.setText(prefix+Objects.toString(selected.getOutputData().getString("summary"),
+     "Failed or conflicts - see Backup activity; tap Back up now / Retry"));break;
     case CANCELLED: label.setText(prefix+"Cancelled / off. An accepted cloud request may still finish.");break;
     default: label.setText(prefix+"Waiting");
    }

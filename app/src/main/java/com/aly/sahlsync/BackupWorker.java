@@ -14,14 +14,15 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 public final class BackupWorker extends Worker {
- private int uploaded,downloaded,unchanged,excluded,conflicts,visited;
+ private int uploaded,downloaded,unchanged,excluded,conflicts,visited,filesChecked;
  private String current="Connecting";
  private String folderName="Sahl Sync";
  private void progress(){progress(0,0,false);}
  private void progress(long accepted,long total,boolean resumed){
   setProgressAsync(new Data.Builder()
    .putString("file",current.length()>500?current.substring(0,500)+"...":current)
-   .putInt("uploaded",uploaded).putInt("unchanged",unchanged).putInt("conflicts",conflicts)
+   .putInt("filesChecked",filesChecked).putInt("uploaded",uploaded).putInt("downloaded",downloaded)
+   .putInt("unchanged",unchanged).putInt("conflicts",conflicts)
    .putLong("acceptedBytes",accepted).putLong("totalBytes",total).putBoolean("resumed",resumed).build());
  }
  private final Set<String> seen=new HashSet<>();
@@ -68,19 +69,17 @@ public final class BackupWorker extends Worker {
     if(SyncDirection.from(pair.optString("direction"))==SyncDirection.UPLOAD){
      walk(c,graph,local.getUri(),pair.getString("remote"),"",pair,0);
     }else{
-     FolderSync sync=new FolderSync(c,graph,pair,path->{current=path;progress();});
+     FolderSync sync=new FolderSync(c,graph,pair,this::reportFolderProgress);
      sync.run(Uri.parse(pair.getString("local")));
-     uploaded=sync.uploaded;
-     downloaded=sync.downloaded;
-     unchanged=sync.unchanged;
-     excluded=sync.excluded;
-     conflicts=sync.conflicts;
+     reportFolderProgress(sync,current);
     }
-    String counts=uploaded+" uploaded, "+(downloaded==0?"":downloaded+" downloaded, ")+unchanged+" unchanged";
+    String counts=filesChecked+" files checked, "+(uploaded+downloaded)+" synced ("+uploaded+" uploaded, "
+     +downloaded+" downloaded), "+unchanged+" unchanged";
     BackupCancellation.check();
     Store.history(c,getInputData().getString("pair"),(getInputData().getString("scheduleGeneration")!=null?"Scheduled backup finished: ":"Backup finished: ")+counts+", "+excluded+" excluded, "+conflicts+" conflicts.");
     notifyResult(counts+", "+conflicts+" conflicts.");
-    return conflicts==0?Result.success(new Data.Builder().putString("summary","Completed: "+counts).build()):Result.failure(new Data.Builder().putString("summary",conflicts+" conflicts - see History").build());
+    if(conflicts==0)return Result.success(new Data.Builder().putString("summary","Completed: "+counts).build());
+    return Result.failure(new Data.Builder().putString("summary",counts+", "+conflicts+" conflicts. See Backup activity.").build());
    }catch(Graph.HttpError e){
     if(isStopped())return Result.failure();
     boolean retry=e.status==429||e.status>=500;
@@ -116,6 +115,17 @@ public final class BackupWorker extends Worker {
    }finally{BackupCancellation.clear();}
   }
  }
+ private void reportFolderProgress(FolderSync sync,String path){
+  current=path;
+  filesChecked=sync.filesChecked;
+  uploaded=sync.uploaded;
+  downloaded=sync.downloaded;
+  unchanged=sync.unchanged;
+  excluded=sync.excluded;
+  conflicts=sync.conflicts;
+  progress();
+ }
+
  private Result signInRequired(Context context){
   if(isStopped())return Result.failure();
   Store.history(context,getInputData().getString("pair"),"Microsoft sign-in required. Check your OneDrive account in Sahl Sync.");
@@ -169,10 +179,12 @@ public final class BackupWorker extends Worker {
     if(isStopped()||Thread.currentThread().isInterrupted())throw new InterruptedException();
     if(++visited>5000)throw new IOException("Alpha limit: 5000 items per run");
     String name=cursor.getString(1),relative=path+name;
+    boolean directory=android.provider.DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(2));
     if(FolderSync.reserved(name)||BackupRules.excluded(relative,pair.optString("exclude"))){excluded++;continue;}
+    if(!directory)filesChecked++;
     current=relative;progress();BackupRules.validateName(name);
     Uri uri=android.provider.DocumentsContract.buildDocumentUriUsingTree(source,cursor.getString(0));
-    if(android.provider.DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(2))){
+    if(directory){
      walk(c,graph,uri,graph.folder(remote,name),relative+"/",pair,depth+1);
     }else{
      try{
