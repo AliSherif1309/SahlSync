@@ -530,7 +530,7 @@ public final class MainActivity extends Activity {
   if(auth==null)return;status.setText("Loading OneDrive folders...");
   io.execute(()->{
    try{
-    IAuthenticationResult token=Auth.token(auth,owner.getId());Graph graph=new Graph(token.getAccessToken());
+    Graph graph=Auth.graph(auth,owner.getId());
     JSONObject parent=graph.json("GET","/me/drive/"+(id.equals("root")?"root":"items/"+Uri.encode(id)),null);
     JSONArray folders=graph.folders(parent.getString("id"));
     List<String> options=new ArrayList<>();options.add("Use this folder");options.add("Back to OneDrive root");for(int i=0;i<folders.length();i++)options.add(folders.getJSONObject(i).getString("name"));
@@ -559,8 +559,7 @@ public final class MainActivity extends Activity {
  }
  private Graph graphForPair(JSONObject pair)throws Exception{
   if(auth==null)throw new java.io.IOException("Sign-in unavailable");
-  IAuthenticationResult token=Auth.token(auth,pair.getString("account"));
-  return new Graph(token.getAccessToken());
+  return Auth.graph(auth,pair.getString("account"));
  }
  private void showVersionFiles(JSONObject pair){
   if(connectedAccount(pair.optString("account"))==null){message("Connect the Microsoft account for this folder first.");return;}

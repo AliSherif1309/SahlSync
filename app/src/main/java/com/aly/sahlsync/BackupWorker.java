@@ -5,7 +5,6 @@ import android.net.Uri;
 import androidx.annotation.NonNull;
 import androidx.documentfile.provider.DocumentFile;
 import androidx.work.*;
-import com.microsoft.identity.client.*;
 import com.microsoft.identity.client.exception.*;
 import org.json.*;
 import java.io.*;
@@ -60,11 +59,9 @@ public final class BackupWorker extends Worker {
     folderName=pair.optString("name","Sahl Sync");
     if(!isScheduled())startManualForeground(c);
     BackupCancellation.check();
-    IAuthenticationResult auth=Auth.token(Auth.open(c),pair.getString("account"));
-    if(!auth.getAccount().getId().equals(pair.getString("account")))throw new Auth.SignInRequired();
+    Graph graph=Auth.graph(Auth.open(c),pair.getString("account"));
     DocumentFile local=DocumentFile.fromTreeUri(c,Uri.parse(pair.getString("local")));
     if(local==null||!local.isDirectory()||!local.canRead())throw new IOException("Local folder permission is unavailable; select it again");
-    Graph graph=new Graph(auth.getAccessToken());
     graph.enableResumableUploads(c,getInputData().getString("pair"),this::progress);
     if(SyncDirection.from(pair.optString("direction"))==SyncDirection.UPLOAD){
      walk(c,graph,local.getUri(),pair.getString("remote"),"",pair,0);
@@ -130,7 +127,7 @@ public final class BackupWorker extends Worker {
   if(isStopped())return Result.failure();
   Store.history(context,getInputData().getString("pair"),"Microsoft sign-in required. Check your OneDrive account in Sahl Sync.");
   notifyResult("Microsoft sign-in required. Open Sahl Sync to check your account.");
-  return Result.failure();
+  return Result.failure(new Data.Builder().putString("summary","Microsoft sign-in required. Connect this account and retry.").build());
  }
 
  private Result retryConnection(Context context,String reason){

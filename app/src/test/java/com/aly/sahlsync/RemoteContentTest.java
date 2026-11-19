@@ -38,6 +38,18 @@ public class RemoteContentTest {
  @Test public void rejectsNonGraphInitialHostWithoutSendingToken()throws Exception{
   try{RemoteContent.sha256("https://example.com/content","token",uri->{throw new AssertionError();});fail();}catch(IOException expected){}
  }
+ @Test public void onlyGraphUnauthorizedResponsesCanRefreshBearerToken()throws Exception{
+  String address="https://graph.microsoft.com/content";
+  Reply rejected=new Reply(401,null,"");
+  try{RemoteContent.sha256(address,"token",uri->rejected);fail();}
+  catch(Graph.HttpError expected){assertEquals(401,expected.status);}
+  assertTrue(rejected.disconnected);
+
+  Reply graph=new Reply(302,"https://files.1drv.com/download",""),cdn=new Reply(401,null,"");
+  try{RemoteContent.sha256(address,"token",uri->uri.getHost().equals("graph.microsoft.com")?graph:cdn);fail();}
+  catch(IOException expected){assertFalse(expected instanceof Graph.HttpError);}
+  assertFalse(cdn.headers.containsKey("Authorization"));
+ }
  @Test public void boundsRedirectLoops()throws Exception{
   Reply loop=new Reply(302,"https://graph.microsoft.com/content","");int[] opens={0};
   try{RemoteContent.sha256("https://graph.microsoft.com/content","token",uri->{opens[0]++;return loop;});fail();}catch(IOException expected){}

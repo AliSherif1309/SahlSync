@@ -32,6 +32,7 @@ final class RemoteContent {
      if(location==null||location.isEmpty())throw new IOException("Missing content redirect");
      address=address.resolve(location);continue;
     }
+    if(hop==0&&code==401)throw new Graph.HttpError(code);
     if(code!=200)throw new IOException("Content verification returned HTTP "+code);
     BackupRules.requireFileSize(connection.getContentLengthLong());
     try(InputStream in=connection.getInputStream()){return BackupRules.hash(in,output);}

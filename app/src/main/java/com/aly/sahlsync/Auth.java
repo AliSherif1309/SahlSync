@@ -26,11 +26,15 @@ final class Auth {
    return PublicClientApplication.createMultipleAccountPublicClientApplication(c,config);
   }
  }
- static IAuthenticationResult token(IMultipleAccountPublicClientApplication app,String accountId) throws Exception {
+ static Graph graph(IMultipleAccountPublicClientApplication app,String accountId){
+  return new Graph(forceRefresh->token(app,accountId,forceRefresh).getAccessToken());
+ }
+
+ private static IAuthenticationResult token(IMultipleAccountPublicClientApplication app,String accountId,boolean forceRefresh) throws Exception {
   IAccount account=app.getAccount(accountId);
   if(account==null||!accountId.equals(account.getId()))throw new SignInRequired();
   IAuthenticationResult result=app.acquireTokenSilent(new AcquireTokenSilentParameters.Builder().withScopes(Arrays.asList(SCOPES))
-   .forAccount(account).fromAuthority(account.getAuthority()).build());
+   .forAccount(account).fromAuthority(account.getAuthority()).forceRefresh(forceRefresh).build());
   if(result.getAccount()==null||!accountId.equals(result.getAccount().getId()))throw new SignInRequired();
   return result;
  }
