@@ -31,7 +31,7 @@ public class BackupRulesTest {
  @Test public void largerFilesStayWithinTheOneDriveReplacementLimit()throws Exception{
   BackupRules.requireFileSize(129L*1024*1024);
   BackupRules.requireFileSize(BackupRules.MAX_FILE_BYTES);
-  assertTrue(BackupRules.MAX_FILE_BYTES<=250_000_000L);
+  assertTrue(BackupRules.MAX_FILE_BYTES>=2_000_000_000L);
   try{BackupRules.requireFileSize(BackupRules.MAX_FILE_BYTES+1);fail();}
   catch(BackupRules.FileTooLarge expected){}
  }

@@ -1,3 +1,14 @@
+## 0.8.0-beta.1
+- OneDrive files are compared using OneDrive's fingerprint, so matching files are no longer downloaded just to check them.
+- Files up to 2 GB; large replacements upload in chunks.
+- Problem items are skipped and reported instead of stopping the whole run; 100,000 items per run.
+- New schedules: every hour and every 6 hours.
+- Version history keeps the newest 10 copies per file and cleans up older ones.
+- Files deleted on OneDrive are also saved to Version history before the phone copy is moved aside.
+
+## 0.7.0-alpha.4
+- Two-way sync now syncs deletions; unchanged files are skipped without re-reading.
+
 ## 0.3.0-alpha1
 - Live manual/daily work status and per-file counters; history updates automatically.
 - Edit backup name, exclusions, network, charging and daily schedule without recreating the pair.

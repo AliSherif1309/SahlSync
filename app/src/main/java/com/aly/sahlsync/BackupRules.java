@@ -6,7 +6,7 @@ import java.util.*;
 
 /** Content addressing makes retries idempotent and keeps changed versions separate. */
 public final class BackupRules {
- public static final int MAX_FILE_MIB=224;
+ public static final int MAX_FILE_MIB=2048;
  public static final long MAX_FILE_BYTES=MAX_FILE_MIB*1024L*1024L;
 
  static final class FileTooLarge extends IOException {

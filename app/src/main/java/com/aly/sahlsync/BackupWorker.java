@@ -52,6 +52,8 @@ public final class BackupWorker extends Worker {
        long next=BackupSchedule.next(java.time.Instant.ofEpochMilli(after),java.time.ZoneId.systemDefault(),
         pair.getInt("scheduleHour"),pair.getInt("scheduleMinute"),days);
        BackupSchedule.enqueue(c,pair,next).getResult().get();
+      }else if(pair.optLong("scheduleInterval")>0){
+       BackupSchedule.enqueue(c,pair,System.currentTimeMillis()+pair.getLong("scheduleInterval")).getResult().get();
       }
       if(getRunAttemptCount()==0)Store.history(c,pair.optString("id"),"Scheduled backup started.");
      }else if(getInputData().getBoolean("legacyDaily",false)&&!pair.optBoolean("daily"))return Result.success();

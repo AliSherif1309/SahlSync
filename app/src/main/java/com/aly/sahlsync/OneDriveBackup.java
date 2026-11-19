@@ -35,12 +35,19 @@ final class OneDriveBackup implements VersionedBackup.Backend {
   String pairFolder=graph.folder(root,pair.getString("id"));
   return graph.folder(pairFolder,bucket(path));
  }
+ static final int KEEP_VERSIONS=10;
  public void archive(VersionedBackup.Item current,String expectedHash)throws Exception{
   File snapshot=File.createTempFile("snapshot-",".tmp",context.getCacheDir());
-  File info=File.createTempFile("snapshot-info-",".json",context.getCacheDir());
   try{
    String downloaded=graph.download(current.id,snapshot);
    if(!expectedHash.equals(downloaded)||snapshot.length()!=current.size)throw new IOException("Cloud file changed before archiving");
+   archiveLocal(snapshot,expectedHash);
+  }finally{snapshot.delete();}
+ }
+ /** Stores a verified copy of a local file in Version history, then keeps only the newest copies. */
+ void archiveLocal(File snapshot,String expectedHash)throws Exception{
+  File info=File.createTempFile("snapshot-info-",".json",context.getCacheDir());
+  try{
    String folder=archiveFolder();
    try{
     JSONObject existing=graph.item(folder,"origin.json");graph.download(existing.getString("id"),info);
@@ -56,7 +63,14 @@ final class OneDriveBackup implements VersionedBackup.Backend {
    String filename=System.currentTimeMillis()+"-"+UUID.randomUUID()+"-"+expectedHash+".snapshot";
    JSONObject archived=graph.upload(folder,filename,snapshot);
    if(archived.optLong("size",-1)!=snapshot.length()||!expectedHash.equals(graph.contentHash(archived.getString("id"))))throw new IOException("Archived copy could not be verified");
-  }finally{snapshot.delete();info.delete();}
+   prune();
+  }finally{info.delete();}
+ }
+ private void prune(){
+  try{
+   JSONArray all=versions(graph,pair,path);
+   for(int i=KEEP_VERSIONS;i<all.length();i++)graph.delete(all.getJSONObject(i).getString("id"),null);
+  }catch(Exception ignored){/* Cleanup is best-effort and never blocks a sync. */}
  }
  private static long snapshotTime(JSONObject item){String name=item.optString("name");return Long.parseLong(name.substring(0,name.indexOf('-')));}
  static JSONArray versions(Graph graph,JSONObject pair,String path)throws Exception{

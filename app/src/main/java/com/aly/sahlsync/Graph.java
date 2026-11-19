@@ -97,6 +97,7 @@ final class Graph {
  }
  JSONObject updateFile(String id,String expectedTag,File file)throws Exception{
   if(expectedTag==null||expectedTag.isEmpty())throw new IOException("Missing file tag");
+  if(uploads!=null&&file.length()>10L*1024*1024)return uploads.replace(id,expectedTag,file);
   return putFile(ROOT+"/me/drive/items/"+Uri.encode(id)+"/content",file,expectedTag);
  }
  private JSONObject putFile(String address,File file,String ifMatch)throws Exception{

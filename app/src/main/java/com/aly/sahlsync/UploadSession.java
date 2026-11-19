@@ -41,6 +41,15 @@ final class UploadSession {
   return send(url,file,0,false);
  }
 
+ /** Replaces an existing large file in chunks. If-Match makes OneDrive reject it if the file changed meanwhile. */
+ JSONObject replace(String itemId,String eTag,File file)throws Exception{
+  byte[] body=new JSONObject().put("item",new JSONObject().put("@microsoft.graph.conflictBehavior","replace"))
+   .toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+  JSONObject created=graph.request("POST",Graph.ROOT+"/me/drive/items/"+android.net.Uri.encode(itemId)+"/createUploadSession",
+   body,"application/json",eTag);
+  return send(created.getString("uploadUrl"),file,0,false);
+ }
+
  JSONObject resume(String path,File file,String hash)throws Exception{
   JSONObject checkpoint=new JSONObject(checkpoints.getString(pair,"{}"));
   if(!(path+"\n"+hash).equals(checkpoint.optString("identity")))return null;

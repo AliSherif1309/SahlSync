@@ -223,7 +223,7 @@ public final class MainActivity extends Activity {
   connect.addView(updates);
   content.addView(SahlTheme.button(this,"Local Wi-Fi sync (preview)",()->startActivity(new Intent(this,LanActivity.class))));
   LinearLayout pairs=card("Folder backups");
-  pairs.addView(SahlTheme.label(this,"Choose upload only, download only, or two-way sync. Two-way sync uses the newest modified copy and keeps the earlier copy. File deletions are never synced. Limit: "+BackupRules.MAX_FILE_MIB+" MiB per file.",15,SahlTheme.MUTED));
+  pairs.addView(SahlTheme.label(this,"Choose upload only, download only, or two-way sync. Two-way sync uses the newest modified copy and syncs deletions. Replaced and deleted files are kept in Version history (newest "+OneDriveBackup.KEEP_VERSIONS+" copies per file). Limit: "+BackupRules.MAX_FILE_MIB/1024+" GB per file.",15,SahlTheme.MUTED));
   pairs.addView(SahlTheme.button(this,"Add folder backup",()->{
    if(accounts.isEmpty()){message("Connect OneDrive first.");return;}
    pickPhoneFolder(42,null);

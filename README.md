@@ -10,10 +10,12 @@ Download the signed APK from [GitHub Releases](https://github.com/AliSherif1309/
 
 - Manual or scheduled runs with network and charging conditions, activity per folder, and optional completion notifications.
 - OneDrive account selection for each folder pair. Work or school accounts may require organization approval.
-- Resumable uploads for new files over 10 MiB. Existing-file replacements and downloads currently restart if interrupted.
+- Large files (over 10 MiB) upload in chunks, both new files and replacements. New-file uploads resume after an interruption.
 - Two-way mode uses the newest modified copy and preserves prior versions. Tied or missing timestamps with different contents are reported as conflicts. Deletions sync both ways after a file has synced once: a file deleted on the phone is moved to OneDrive version history, and a file deleted on OneDrive is renamed on the phone to `sahl-sync-previous-…` (nothing is erased). If a file was edited on one side and deleted on the other, the edit wins and the file is restored. Unchanged files are skipped without re-reading them.
-- **224 MiB maximum per file**, 5,000 items per run, and 32 levels of folder nesting. Oversized files are skipped and listed in Backup activity while the rest of the run continues.
-- Older OneDrive copies are stored under `.sahl-sync-history` and can be saved from **Version history**. There is no automatic cleanup.
+- **2 GB maximum per file**, 100,000 items per run (20,000 for Wi-Fi sync), and 32 levels of folder nesting. Problem items (oversized files, names that differ only by capital letters, too-deep folders) are skipped and listed in Backup activity while the rest of the run continues.
+- Files are compared with OneDrive's own fingerprint (QuickXorHash), so matching files are not downloaded just to check them.
+- Schedules: once, daily, selected weekdays, every hour or every 6 hours.
+- Replaced and deleted files are stored under `.sahl-sync-history` and can be saved from **Version history**. The newest 10 copies per file are kept; older ones are removed automatically.
 
 ## Build from source
 

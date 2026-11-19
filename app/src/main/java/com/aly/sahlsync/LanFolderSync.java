@@ -10,7 +10,7 @@ import java.util.*;
 import java.util.function.Consumer;
 
 final class LanFolderSync {
- private static final int MAX_ITEMS=5000;
+ private static final int MAX_ITEMS=20000;
  private final Context context;
  private final LanPeer peer;
  private final Mode mode;
@@ -55,7 +55,7 @@ final class LanFolderSync {
    registerName(path);
    paths.add(path);
   }
-  if(paths.size()>MAX_ITEMS)throw new IOException("Combined folders have more than 5,000 files.");
+  if(paths.size()>MAX_ITEMS)throw new IOException("Combined folders have more than 20,000 files.");
   int sent=0,received=0,checked=0,unchanged=0,conflicts=0;
   List<String> examples=new ArrayList<>();
   for(String path:paths){
@@ -118,7 +118,7 @@ final class LanFolderSync {
    if(rows==null)throw new IOException("Could not read the phone folder.");
    while(rows.moveToNext()){
     BackupCancellation.check();
-    if(++visited>MAX_ITEMS)throw new IOException("Phone folder has more than 5,000 items.");
+    if(++visited>MAX_ITEMS)throw new IOException("Phone folder has more than 20,000 items.");
     String name=rows.getString(1);
     if(name==null)throw new IOException("Phone file name is unavailable.");
     if(FolderSync.reserved(name))continue;

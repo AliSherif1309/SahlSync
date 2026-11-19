@@ -25,6 +25,7 @@ final class FolderSync {
  private final BiConsumer<FolderSync,String> progress;
  int uploaded,downloaded,deleted,unchanged,excluded,conflicts,filesChecked;
  private int visited;
+ private final Set<String> clashes=new HashSet<>(),clashNames=new HashSet<>();
 
  FolderSync(Context context,Graph graph,JSONObject pair,BiConsumer<FolderSync,String> progress){
   this.context=context;
@@ -71,8 +72,8 @@ final class FolderSync {
     if(name==null)throw new IOException("Phone file name is unavailable");
     String key=key(name);
     Uri uri=DocumentsContract.buildDocumentUriUsingTree(parent,rows.getString(0));
-    if(result.put(key,new Local(uri,name,rows.getString(2),rows.getLong(3),rows.getLong(4)))!=null)
-     throw new IOException("Phone folder has names that differ only by case");
+    if(result.containsKey(key)){clashes.add(uri.toString());clashNames.add(key);continue;}
+    result.put(key,new Local(uri,name,rows.getString(2),rows.getLong(3),rows.getLong(4)));
    }
   }
   return result;
@@ -89,24 +90,25 @@ final class FolderSync {
  }
 
  private void walk(Uri parent,String drive,String path,int depth)throws Exception{
-  if(depth>32)throw new IOException("Folder nesting limit reached");
+  if(depth>32){conflict(path,"Folder nesting is too deep; skipped.");return;}
   Map<String,Local> local=localChildren(parent);
   Map<String,JSONObject> cloud=new LinkedHashMap<>();
   JSONArray rows=graph.children(drive);
   for(int index=0;index<rows.length();index++){
    JSONObject row=rows.getJSONObject(index);
-   if(cloud.put(key(row.getString("name")),row)!=null)
-    throw new IOException("OneDrive returned duplicate file names");
+   if(cloud.containsKey(key(row.getString("name")))){clashNames.add(key(row.getString("name")));continue;}
+   cloud.put(key(row.getString("name")),row);
   }
   Set<String> names=new LinkedHashSet<>(local.keySet());
   names.addAll(cloud.keySet());
   for(String key:names){
    BackupCancellation.check();
-   if(++visited>5000)throw new IOException("Sync limit: 5000 items per run");
+   if(++visited>100000)throw new IOException("Sync limit: 100,000 items per run");
    Local phone=local.get(key);
    JSONObject remote=cloud.get(key);
    String name=phone==null?remote.getString("name"):phone.name;
    String relative=path+name;
+   if(clashNames.remove(key)){conflict(relative,"Two names differ only by capital letters; rename one. Skipped.");continue;}
    if(reserved(name)||BackupRules.excluded(relative,pair.optString("exclude"))){excluded++;continue;}
    boolean phoneFolder=phone!=null&&phone.directory();
    boolean cloudFolder=remote!=null&&remote.has("folder");
@@ -151,7 +153,7 @@ final class FolderSync {
    &&phone.modified==receipt.optLong("phoneModified",-1)&&phone.size==receipt.optLong("size",-2);
   switch(direction.deletion(phone!=null,cloud!=null,receipt!=null,phoneUnchanged,cloudUnchanged)){
    case DELETE_CLOUD: deleteCloud(drive,name,path,cloud,receipt);return;
-   case DELETE_PHONE: deletePhone(path,phone);return;
+   case DELETE_PHONE: deletePhone(drive,name,path,phone);return;
    default: break;
   }
   if(receipt!=null&&(phone==null)!=(cloud==null)&&direction==SyncDirection.NEWEST)
@@ -181,7 +183,7 @@ final class FolderSync {
    if(phone!=null&&remote!=null){
     remoteHash=receipt!=null&&!remote.tag.isEmpty()&&remote.id.equals(receipt.optString("id"))
      &&remote.tag.equals(receipt.optString("tag"))&&remote.size==receipt.optLong("size",-1)
-     ?receipt.getString("hash"):backend.hash(remote);
+     ?receipt.getString("hash"):sameQuickXor(cloud,local)?localHash:backend.hash(remote);
    }
    boolean same=localHash!=null&&localHash.equals(remoteHash)&&local.length()==remote.size;
    long cloudModified=cloud==null?0:modified(cloud.optString("lastModifiedDateTime"));
@@ -213,6 +215,15 @@ final class FolderSync {
   }finally{if(local!=null)local.delete();}
  }
 
+ /** Uses OneDrive's own fingerprint so matching files don't need to be downloaded to compare. */
+ private static boolean sameQuickXor(JSONObject cloud,File local){
+  try{
+   JSONObject hashes=cloud.optJSONObject("file")==null?null:cloud.getJSONObject("file").optJSONObject("hashes");
+   String expected=hashes==null?"":hashes.optString("quickXorHash");
+   return !expected.isEmpty()&&cloud.optLong("size",-1)==local.length()&&expected.equals(QuickXorHash.of(local));
+  }catch(Exception error){return false;}
+ }
+
  private static long modified(String timestamp){
   try{return Instant.parse(timestamp).toEpochMilli();}
   catch(java.time.DateTimeException e){return 0;}
@@ -234,12 +245,21 @@ final class FolderSync {
  }
 
  /** Deleted on OneDrive: rename the phone file to a recovery name instead of erasing it. */
- private void deletePhone(String path,Local phone)throws Exception{
+ private void deletePhone(String drive,String name,String path,Local phone)throws Exception{
   BackupCancellation.check();
+  File copy=File.createTempFile("sync-deleted-",".tmp",context.getCacheDir());
+  try{
+   String hash;
+   try(InputStream input=resolver.openInputStream(phone.uri);OutputStream output=new FileOutputStream(copy)){
+    if(input==null)throw new IOException("Cannot read phone file");
+    hash=BackupRules.hash(input,output);
+   }
+   new OneDriveBackup(context,graph,pair,drive,path,name).archiveLocal(copy,hash);
+  }finally{copy.delete();}
   String kept=HISTORY_PREFIX+UUID.randomUUID()+"-"+phone.name.substring(0,Math.min(80,phone.name.length()));
   if(DocumentsContract.renameDocument(resolver,phone.uri,kept)==null)throw new LocalConflict("Phone storage could not move the deleted file aside.");
   Store.forget(context,pairId,path);
-  Store.history(context,pairId,path+": deleted on OneDrive; phone copy kept as "+kept+".");
+  Store.history(context,pairId,path+": deleted on OneDrive; phone copy kept as "+kept+" and in Version history.");
   deleted++;
  }
 
