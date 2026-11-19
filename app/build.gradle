@@ -6,8 +6,8 @@ android {
   applicationId 'com.aly.sahlsync'
   minSdk 26
   targetSdk 36
-  versionCode 28
-  versionName '0.8.0-beta.1'
+  versionCode 29
+  versionName '0.9.0-beta.1'
   def clientId = providers.gradleProperty('msalClientId').getOrElse('00000000-0000-0000-0000-000000000000')
   def signature = providers.gradleProperty('msalSignature').getOrElse('UNCONFIGURED')
   buildConfigField 'String', 'MSAL_CLIENT_ID', '"' + clientId + '"'
@@ -25,5 +25,6 @@ dependencies {
  implementation 'com.microsoft.identity.client:msal:8.6.0'
  implementation 'androidx.work:work-runtime:2.10.1'
  implementation 'androidx.documentfile:documentfile:1.1.0'
+ implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
  testImplementation 'junit:junit:4.13.2'
 }

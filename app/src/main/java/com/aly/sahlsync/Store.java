@@ -32,6 +32,13 @@ final class Store {
  static synchronized void forget(Context c,String pair,String path)throws Exception{
   if(!c.getSharedPreferences("file-receipts",0).edit().remove(receiptKey(pair,path)).commit())throw new java.io.IOException("Could not update sync records");
  }
+ /** Clears a folder pair's sync records. Used when its folders change, so nothing is mistaken for a deletion. */
+ static synchronized void forgetAll(Context c,String pair)throws Exception{
+  SharedPreferences receipts=c.getSharedPreferences("file-receipts",0);
+  SharedPreferences.Editor edit=receipts.edit();
+  for(String key:receipts.getAll().keySet())if(key.startsWith(pair+":"))edit.remove(key);
+  if(!edit.commit())throw new java.io.IOException("Could not reset sync records");
+ }
  static synchronized JSONArray files(Context c,String pair)throws Exception{
   JSONArray files=new JSONArray();for(Object raw:c.getSharedPreferences("file-receipts",0).getAll().values()){
    if(raw instanceof String){JSONObject value=new JSONObject((String)raw);if(pair.equals(value.optString("pair")))files.put(value);}

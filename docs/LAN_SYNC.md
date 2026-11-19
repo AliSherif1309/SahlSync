@@ -4,26 +4,17 @@ Sahl Sync can pair Android with multiple Windows folders for manual sync. Use co
 
 ## On the PC
 
-Use Python 3.11 or later and OpenSSL on PATH. Keep both companion files together and open the tray companion from Windows PowerShell.
+1. Download **SahlSyncPC.exe** from the latest [GitHub release](https://github.com/AliSherif1309/SahlSync/releases) and double-click it. Nothing else needs to be installed.
+2. Check the **PC address** (it is filled in for you) and add the folders you want to share.
+3. Select **Start sharing**. If Windows asks, allow access on **private networks**.
+4. Select a folder to show its QR code. Tick **Start with Windows** to share automatically after sign-in.
 
-```powershell
-powershell.exe -NoProfile -STA -File .\desktop\Start-SahlSyncTray.ps1
-```
-
-Enter the PC Wi-Fi address and port, add your folders, and select **Start sharing**. Select a folder to copy its pairing code or show its QR. Enable **Start with Windows** to share after sign-in.
-
-The command-line companion also works. The optional QR image requires `python -m pip install "qrcode[pil]"`. Get the PC's Wi-Fi IPv4 address from `ipconfig`.
-
-```powershell
-python desktop/sahl_sync_lan.py "C:\SyncTest" --share "C:\AnotherTest" --listen 192.168.1.10 --qr "$env:TEMP\sahl-pair.png"
-```
-
-Substitute your PC address and test folder. Keep that terminal open and allow incoming connections for Python on the private network if Windows prompts. Open the QR image or use the printed pairing code. Keep the code and image private.
+Developers can still run `python desktop/sahl_sync_pc.py` (needs `cryptography` and `qrcode[pil]`) or the command-line `desktop/sahl_sync_lan.py`.
 
 ## On Android
 
 1. Open **Local Wi-Fi sync (preview)** in Sahl Sync.
-2. Enter the PC's pairing code. If you use the optional QR, scan it with your phone’s camera or QR reader and paste the decoded text. Tap **Save** to verify the connection.
+2. Tap **Scan QR from PC** and point the camera at the QR in the PC app (or tap **Enter pairing code** and paste it). Tap **Save** to verify the connection.
 3. Choose a test folder on the phone, select a **Sync mode**, then tap **Sync now**.
 4. Use **Add folder pair** for each additional share. Each pair has its own code, mode, result, and version history. **Sync all folders** runs the configured pairs one at a time.
 

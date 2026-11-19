@@ -1,3 +1,8 @@
+## 0.9.0-beta.1
+- Edit backup settings can change the phone folder and the OneDrive folder (sync records reset safely).
+- New Windows app SahlSyncPC.exe: no Python or OpenSSL needed; shows a QR code per shared folder; start with Windows.
+- Phone: Scan QR from PC to pair.
+
 ## 0.8.0-beta.1
 - OneDrive files are compared using OneDrive's fingerprint, so matching files are no longer downloaded just to check them.
 - Files up to 2 GB; large replacements upload in chunks.
