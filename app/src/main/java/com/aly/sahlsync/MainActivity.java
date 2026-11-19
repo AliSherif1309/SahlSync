@@ -380,10 +380,21 @@ public final class MainActivity extends Activity {
    EditText exclude=new EditText(this);exclude.setHint("Exclusions, one pattern per line");exclude.setText(pair.optString("exclude"));form.addView(exclude);
    CheckBox wifi=new CheckBox(this);wifi.setText("Unmetered network only");wifi.setChecked(pair.optBoolean("unmetered",true));form.addView(wifi);
    CheckBox charging=new CheckBox(this);charging.setText("Only while charging");charging.setChecked(pair.optBoolean("charging"));form.addView(charging);
+   form.addView(SahlTheme.label(this,"Folders",16,SahlTheme.TEXT));
+   final AlertDialog[] holder=new AlertDialog[1];
+   form.addView(SahlTheme.button(this,"Change phone folder",()->{
+    editingPair=original.optString("id");if(holder[0]!=null)holder[0].dismiss();
+    pickPhoneFolder(45,Uri.parse(pair.optString("local")));
+   }));
+   form.addView(SahlTheme.button(this,"Change OneDrive folder ("+pair.optString("remoteName")+")",()->{
+    editingPair=original.optString("id");if(holder[0]!=null)holder[0].dismiss();
+    selectAccount("Choose a OneDrive account",true,owner->chooseRemote("root","OneDrive",owner));
+   }));
    Spinner direction=addDirection(form,pair.optString("direction","upload"));
    ScheduleEditor schedule=new ScheduleEditor(this,form,pair);
    ScrollView scroll=new ScrollView(this);scroll.addView(form);
    AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Edit backup settings").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
+   holder[0]=dialog;
    dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
     try{String title=name.getText().toString().trim();if(title.isEmpty()){name.setError("Enter a backup name");return;}
      if(!applyDirection(pair,direction))return;
@@ -454,6 +465,17 @@ public final class MainActivity extends Activity {
   super.onActivityResult(request,result,data);
   if(request==43){saveSnapshotCopy(result,data);return;}
   if(request==44){completeWriteGrant(result,data);return;}
+  if(request==45){
+   String id=editingPair;editingPair=null;
+   if(result!=RESULT_OK||data==null||data.getData()==null||id==null)return;
+   try{
+    takeFolderGrant(data);
+    if(!FolderSync.writable(getContentResolver(),data.getData())){message("Allow write access when choosing the folder.");return;}
+    JSONObject pair=Store.pair(this,id);
+    changeFolders(pair.put("local",data.getData().toString()),"Phone folder changed");
+   }catch(Exception e){message("Could not change the phone folder.");}
+   return;
+  }
   if(request==42&&result==RESULT_OK&&data!=null&&data.getData()!=null){
    Uri uri=data.getData();try{takeFolderGrant(data);pendingLocal=uri.toString();selectAccount("Choose a OneDrive account",true,owner->chooseRemote("root","OneDrive",owner));}catch(Exception e){message("Persistent folder access was not granted.");}
   }
@@ -535,9 +557,26 @@ public final class MainActivity extends Activity {
     JSONObject parent=graph.json("GET","/me/drive/"+(id.equals("root")?"root":"items/"+Uri.encode(id)),null);
     JSONArray folders=graph.folders(parent.getString("id"));
     List<String> options=new ArrayList<>();options.add("Use this folder");options.add("Back to OneDrive root");for(int i=0;i<folders.length();i++)options.add(folders.getJSONObject(i).getString("name"));
-    runOnUiThread(()->{loadAccount();new AlertDialog.Builder(this).setTitle(name).setItems(options.toArray(new String[0]),(d,index)->{try{if(index==0)configurePair(parent.getString("id"),name,owner);else if(index==1)chooseRemote("root","OneDrive",owner);else{JSONObject folder=folders.getJSONObject(index-2);chooseRemote(folder.getString("id"),folder.getString("name"),owner);}}catch(Exception e){message("Could not select folder.");}}).setNegativeButton("Cancel",null).show();});
+    runOnUiThread(()->{loadAccount();new AlertDialog.Builder(this).setTitle(name).setItems(options.toArray(new String[0]),(d,index)->{try{if(index==0&&editingPair!=null)changeRemote(parent.getString("id"),name,owner);else if(index==0)configurePair(parent.getString("id"),name,owner);else if(index==1)chooseRemote("root","OneDrive",owner);else{JSONObject folder=folders.getJSONObject(index-2);chooseRemote(folder.getString("id"),folder.getString("name"),owner);}}catch(Exception e){message("Could not select folder.");}}).setNegativeButton("Cancel",null).show();});
    }catch(Exception e){runOnUiThread(()->{loadAccount();message("Could not load OneDrive folders. Check connection and account permission.");});}
   });
+ }
+ private String editingPair;
+ private void changeRemote(String remote,String remoteName,IAccount owner)throws Exception{
+  String id=editingPair;editingPair=null;
+  JSONObject pair=Store.pair(this,id).put("remote",remote).put("remoteName",remoteName)
+   .put("account",owner.getId()).put("accountLabel",accountLabel(owner));
+  changeFolders(pair,"OneDrive folder changed to "+remoteName);
+ }
+ /** Saves new folders and resets sync records, so the next run compares both folders fresh and deletes nothing. */
+ private void changeFolders(JSONObject pair,String note)throws Exception{
+  String id=pair.getString("id");
+  synchronized(BackupSchedule.class){Store.update(this,pair);}
+  WorkManager.getInstance(this).cancelUniqueWork("manual-"+id);
+  Store.forgetAll(this,id);
+  Store.history(this,id,note+". The next sync compares both folders fresh; nothing is deleted on that run.");
+  message(note+". Tap Back up now to sync.");
+  draw();loadAccount();
  }
  private void configurePair(String remote,String remoteName,IAccount owner){
   LinearLayout form=new LinearLayout(this);form.setOrientation(LinearLayout.VERTICAL);int pad=SahlTheme.dp(this,20);form.setPadding(pad,pad,pad,pad);

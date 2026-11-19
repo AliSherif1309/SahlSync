@@ -372,20 +372,43 @@ class Server(HTTPServer):
             raise
 
 
+def create_certificate(cert, private_key):
+    """Creates the PC's private TLS certificate without needing OpenSSL installed."""
+    try:
+        import datetime
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+    except ImportError:
+        return False
+    key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Sahl Sync LAN")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    certificate = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+                   .serial_number(x509.random_serial_number()).not_valid_before(now - datetime.timedelta(days=1))
+                   .not_valid_after(now + datetime.timedelta(days=825)).sign(key, hashes.SHA256()))
+    private_key.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                              serialization.NoEncryption()))
+    cert.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    return True
+
+
 def identity(state, folder):
     key = hashlib.sha256(os.fsencode(str(folder).lower())).hexdigest()
     state = state / key
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
     cert, private_key, credential = (state / name for name in ("cert.pem", "key.pem", "pairing.txt"))
     if not cert.is_file() or not private_key.is_file():
-        openssl = shutil.which("openssl")
-        if not openssl:
-            raise SystemExit("Install OpenSSL or add openssl.exe to PATH.")
-        subprocess.run(
-            [openssl, "req", "-x509", "-newkey", "rsa:3072", "-sha256", "-days", "825",
-             "-nodes", "-subj", "/CN=Sahl Sync LAN", "-keyout", str(private_key), "-out", str(cert)],
-            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        if not create_certificate(cert, private_key):
+            openssl = shutil.which("openssl")
+            if not openssl:
+                raise SystemExit("Install the Python 'cryptography' package or OpenSSL.")
+            subprocess.run(
+                [openssl, "req", "-x509", "-newkey", "rsa:3072", "-sha256", "-days", "825",
+                 "-nodes", "-subj", "/CN=Sahl Sync LAN", "-keyout", str(private_key), "-out", str(cert)],
+                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
     if not credential.is_file():
         credential.write_text(secrets.token_hex(32), encoding="ascii")
     token = credential.read_text(encoding="ascii").strip()

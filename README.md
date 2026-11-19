@@ -17,6 +17,14 @@ Download the signed APK from [GitHub Releases](https://github.com/AliSherif1309/
 - Schedules: once, daily, selected weekdays, every hour or every 6 hours.
 - Replaced and deleted files are stored under `.sahl-sync-history` and can be saved from **Version history**. The newest 10 copies per file are kept; older ones are removed automatically.
 
+## Phone ↔ PC over Wi-Fi
+
+Download **SahlSyncPC.exe** from Releases, add folders, select **Start sharing**, then in the phone app tap **Local Wi-Fi sync > Scan QR from PC**. See [Wi-Fi sync](docs/LAN_SYNC.md).
+
+## Editing a backup
+
+**Edit backup settings** can change the phone folder and the OneDrive folder. After a change the next sync compares both folders fresh and deletes nothing on that run.
+
 ## Build from source
 
 Use JDK 17, Android SDK 36 and Gradle 9.5.0.

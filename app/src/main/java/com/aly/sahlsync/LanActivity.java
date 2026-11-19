@@ -47,6 +47,7 @@ public final class LanActivity extends Activity {
   content.addView(addPair);
   connection=SahlTheme.label(this,"",15,SahlTheme.MUTED);
   content.addView(connection);
+  content.addView(SahlTheme.button(this,"Scan QR from PC",this::scanCode));
   pair=SahlTheme.button(this,"Enter pairing code",()->enterCode(""));
   content.addView(pair);
   folder=SahlTheme.label(this,"",15,SahlTheme.MUTED);
@@ -136,6 +137,12 @@ public final class LanActivity extends Activity {
   return a.length==4&&b.length==4&&a[2].equals(b[2])&&a[3].equals(b[3]);
  }
 
+ private void scanCode(){
+  new com.google.zxing.integration.android.IntentIntegrator(this)
+   .setDesiredBarcodeFormats(com.google.zxing.integration.android.IntentIntegrator.QR_CODE)
+   .setPrompt("Scan the QR shown in Sahl Sync on your PC").setBeepEnabled(false).setOrientationLocked(false).initiateScan();
+ }
+
  private void enterCode(String value){
   LanPairs.Pair target=selected;
   EditText input=new EditText(this);
@@ -185,6 +192,9 @@ public final class LanActivity extends Activity {
  @SuppressWarnings("deprecation")
  @Override protected void onActivityResult(int request,int result,Intent data){
   super.onActivityResult(request,result,data);
+  com.google.zxing.integration.android.IntentResult scan=
+   com.google.zxing.integration.android.IntentIntegrator.parseActivityResult(request,result,data);
+  if(scan!=null){if(scan.getContents()!=null)enterCode(scan.getContents().trim());return;}
   if(request==EXPORT_VERSION){
    String version=pendingVersion;
    pendingVersion=null;
