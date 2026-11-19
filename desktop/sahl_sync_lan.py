@@ -68,6 +68,8 @@ def inventory(root):
             if visited > MAX_ITEMS:
                 raise OverflowError("Folder has too many items")
             name = entry.relative_to(root).as_posix()
+            if entry.name.lower().startswith("sahl-sync-staging-"):
+                continue
             try:
                 parts(name)
                 info = checked_stat(entry)
@@ -128,8 +130,12 @@ class Handler(BaseHTTPRequestHandler):
         self.handle_request(True)
 
     def handle_request(self, upload):
-        supplied = self.headers.get("Authorization", "")
-        if not hmac.compare_digest(supplied.encode("utf-8"), self.server.authorization):
+        supplied = self.headers.get("Authorization", "").encode("utf-8")
+        routes = getattr(self.server, "shares", None)
+        if routes is None:
+            routes = {self.server.authorization: self.server.folder}
+        self.folder = next((folder for key, folder in routes.items() if hmac.compare_digest(supplied, key)), None)
+        if self.folder is None:
             self.send_error(401)
             return
         endpoint = urlsplit(self.path)
@@ -138,20 +144,27 @@ class Handler(BaseHTTPRequestHandler):
                 self.body(200, b"{}", "application/json")
                 return
             if endpoint.path == "/v1/manifest" and not upload:
-                data = json.dumps(inventory(self.server.folder), ensure_ascii=False).encode("utf-8")
+                data = json.dumps(dict(inventory(self.folder), resume=1), ensure_ascii=False).encode("utf-8")
                 self.body(200, data, "application/json")
                 return
-            if endpoint.path != "/v1/file":
+            if endpoint.path not in {"/v1/file", "/v1/upload-offset"}:
                 self.send_error(404)
                 return
             names = parse_qs(endpoint.query, strict_parsing=True, max_num_fields=1)
             if set(names) != {"path"} or len(names["path"]) != 1:
                 raise ValueError("Invalid path")
             name = names["path"][0]
-            if upload:
-                self.receive(name)
-            else:
+            if endpoint.path == "/v1/upload-offset" and not upload:
+                self.resume_status(name)
+            elif endpoint.path == "/v1/file" and upload:
+                if self.headers.get("X-Sahl-Total") is None:
+                    self.receive(name)
+                else:
+                    self.resume_upload(name)
+            elif not upload:
                 self.send_file(name)
+            else:
+                self.send_error(405)
         except FileNotFoundError:
             self.send_error(404)
         except (ValueError, OverflowError, UnicodeError):
@@ -169,23 +182,139 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def send_file(self, name):
-        path = destination(self.server.folder, name)
+        path = destination(self.folder, name)
         info = inspect_file(path)
         if self.headers.get("If-Match") != info["hash"]:
             self.send_error(412)
             return
+        length = info["size"]
+        offset = 0
+        requested = self.headers.get("Range")
+        if requested:
+            match = re.fullmatch(r"bytes=([0-9]+)-", requested)
+            if not match or not 0 <= int(match[1]) < length:
+                self.send_error(416)
+                return
+            offset = int(match[1])
         with path.open("rb") as stream:
-            self.send_response(200)
+            stream.seek(offset)
+            self.send_response(206 if requested else 200)
             self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Length", str(info["size"]))
+            if requested:
+                self.send_header("Content-Range", f"bytes {offset}-{length - 1}/{length}")
+            self.send_header("Content-Length", str(length - offset))
             self.end_headers()
-            remaining = info["size"]
+            remaining = length - offset
             while remaining:
                 block = stream.read(min(BLOCK, remaining))
                 if not block:
                     break
                 self.wfile.write(block)
                 remaining -= len(block)
+
+    def resume_files(self, name, create=False):
+        parts(name)
+        length = int(self.headers.get("X-Sahl-Total", "-1"))
+        digest = self.headers.get("X-Sahl-SHA256", "")
+        expected = self.headers.get("If-Match", "")
+        if not 0 <= length <= LIMIT or not HASH.fullmatch(digest) or (
+            expected != "missing" and not HASH.fullmatch(expected)
+        ):
+            raise ValueError("Invalid upload")
+        folder = self.folder / "sahl-sync-staging-lan"
+        if create:
+            try:
+                folder.mkdir(exist_ok=True)
+            except FileExistsError:
+                raise ValueError("A file blocks upload staging")
+        try:
+            if not stat.S_ISDIR(checked_stat(folder).st_mode):
+                raise ValueError("A file blocks upload staging")
+        except FileNotFoundError:
+            pass
+        data, info = folder / "partial", folder / "request.json"
+        for path in (data, info):
+            try:
+                file_stat = checked_stat(path)
+                if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_nlink > 1:
+                    raise ValueError("Invalid upload staging file")
+            except FileNotFoundError:
+                pass
+        ticket = {"name": name, "length": length, "hash": digest, "expected": expected}
+        return data, info, ticket
+
+    def resumable_offset(self, data, info, ticket):
+        try:
+            if json.loads(info.read_text(encoding="utf-8")) == ticket:
+                length = data.stat().st_size
+                if length <= ticket["length"]:
+                    return length
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+        return 0
+
+    def resume_status(self, name):
+        data, info, ticket = self.resume_files(name)
+        offset = self.resumable_offset(data, info, ticket)
+        self.body(200, json.dumps({"offset": offset}).encode("ascii"), "application/json")
+
+    def resume_upload(self, name):
+        data, info, ticket = self.resume_files(name, create=True)
+        start = int(self.headers.get("X-Sahl-Offset", "-1"))
+        length = int(self.headers.get("Content-Length", "-1"))
+        if not 0 <= start <= ticket["length"] or start + length != ticket["length"] or length < 0:
+            raise ValueError("Invalid upload range")
+        offset = self.resumable_offset(data, info, ticket)
+        if offset != start:
+            self.send_error(409)
+            return
+        if not start:
+            # Truncate the previous partial before publishing metadata for this file.
+            with data.open("wb"):
+                pass
+            info.write_text(json.dumps(ticket), encoding="utf-8")
+        with data.open("ab", buffering=0) as stream:
+            remaining = length
+            while remaining:
+                block = self.rfile.read1(min(BLOCK, remaining))
+                if not block:
+                    raise ConnectionResetError("Incomplete upload")
+                if stream.write(block) != len(block):
+                    raise OSError("Could not write upload checkpoint")
+                remaining -= len(block)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if inspect_file(data)["hash"] != ticket["hash"]:
+            data.unlink(missing_ok=True)
+            info.unlink(missing_ok=True)
+            raise ValueError("Checksum mismatch")
+        path = destination(self.folder, name, create=True)
+        try:
+            current = inspect_file(path)["hash"]
+        except FileNotFoundError:
+            current = "missing"
+        if current != ticket["expected"]:
+            data.unlink(missing_ok=True)
+            info.unlink(missing_ok=True)
+            self.send_error(412)
+            return
+        try:
+            self.publish(data, path, current)
+        except FileExistsError:
+            self.send_error(412)
+            return
+        data.unlink(missing_ok=True)
+        info.unlink(missing_ok=True)
+        self.body(200, b"{}", "application/json")
+
+    @staticmethod
+    def publish(stage, path, expected):
+        if expected != "missing":
+            os.replace(stage, path)
+        elif os.name == "nt":
+            os.rename(stage, path)
+        else:
+            os.link(stage, path)
 
     def receive(self, name):
         length = int(self.headers.get("Content-Length", "-1"))
@@ -195,7 +324,7 @@ class Handler(BaseHTTPRequestHandler):
             expected != "missing" and not HASH.fullmatch(expected)
         ):
             raise ValueError("Invalid upload")
-        path = destination(self.server.folder, name, create=True)
+        path = destination(self.folder, name, create=True)
         with tempfile.NamedTemporaryFile(dir=path.parent, prefix="sahl-sync-staging-", delete=False) as stream:
             stage = Path(stream.name)
             try:
@@ -213,7 +342,7 @@ class Handler(BaseHTTPRequestHandler):
                 stream.close()
                 if received.hexdigest() != digest:
                     raise ValueError("Checksum mismatch")
-                path = destination(self.server.folder, name)
+                path = destination(self.folder, name)
                 try:
                     current = inspect_file(path)["hash"]
                 except FileNotFoundError:
@@ -221,18 +350,11 @@ class Handler(BaseHTTPRequestHandler):
                 if current != expected:
                     self.send_error(412)
                     return
-                if expected == "missing":
-                    # Publish without replacing a file created during the upload.
-                    try:
-                        if os.name == "nt":
-                            os.rename(stage, path)
-                        else:
-                            os.link(stage, path)
-                    except FileExistsError:
-                        self.send_error(412)
-                        return
-                else:
-                    os.replace(stage, path)
+                try:
+                    self.publish(stage, path, expected)
+                except FileExistsError:
+                    self.send_error(412)
+                    return
                 self.body(200, b"{}", "application/json")
             finally:
                 stream.close()
@@ -281,6 +403,8 @@ def main():
     parser.add_argument("folder", type=Path)
     parser.add_argument("--listen", required=True, type=ipaddress.IPv4Address, help="PC's local IPv4 address")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--share", type=Path, action="append", default=[], help="Additional folder on the same port")
+    parser.add_argument("--pairing-file", type=Path, help="Write pairing codes to a private JSON file")
     parser.add_argument("--qr", type=Path, help="Save a pairing QR image (requires qrcode)")
     args = parser.parse_args()
     if not any(args.listen in ipaddress.ip_network(block) for block in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8")):
@@ -295,14 +419,37 @@ def main():
     state = state.resolve()
     if state.is_relative_to(folder):
         parser.error("Select a folder that does not contain Sahl Sync's private settings.")
+    roots = [folder]
+    for additional in args.share:
+        candidate = additional.absolute()
+        if not stat.S_ISDIR(checked_stat(candidate).st_mode):
+            parser.error("Select an existing folder.")
+        candidate = candidate.resolve()
+        if state.is_relative_to(candidate):
+            parser.error("Select a folder that does not contain Sahl Sync's private settings.")
+        if candidate in roots:
+            parser.error("Select each folder only once.")
+        roots.append(candidate)
     tls, fingerprint, token = identity(state, folder)
+    codes = {}
+    shares = {}
     with Server((str(args.listen), args.port), Handler) as server:
-        server.folder = folder
         server.tls = tls
-        server.authorization = ("Bearer " + token).encode("ascii")
-        code = f"SAHL1 {args.listen}:{args.port} {fingerprint} {token}"
-        print(f"Sharing {folder}", flush=True)
-        print(f"Pairing code (keep private):\n{code}", flush=True)
+        for root in roots:
+            secret = token if root == folder else identity(state, root)[2]
+            shares[("Bearer " + secret).encode("ascii")] = root
+            codes[str(root)] = f"SAHL1 {args.listen}:{args.port} {fingerprint} {secret}"
+        server.shares = shares
+        if args.pairing_file:
+            output = args.pairing_file.resolve()
+            if any(output.is_relative_to(root) for root in roots):
+                parser.error("Store pairing codes outside the shared folders.")
+            output.write_text(json.dumps(codes), encoding="utf-8")
+        else:
+            for root, code in codes.items():
+                print(f"Sharing {root}", flush=True)
+                print(f"Pairing code (keep private):\n{code}", flush=True)
+        code = codes[str(folder)]
         if args.qr:
             try:
                 import qrcode

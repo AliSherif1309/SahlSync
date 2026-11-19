@@ -14,16 +14,18 @@ final class LanFolderSync {
  private final Context context;
  private final LanPeer peer;
  private final Mode mode;
+ private final String archiveKey;
  private LanVersions versions;
  private final Map<String,LocalFile> phoneFiles=new TreeMap<>();
  private final Map<String,String> names=new HashMap<>();
  private final Consumer<String> progress;
  private int visited,skipped;
 
- LanFolderSync(Context context,LanPeer peer,Mode mode,Consumer<String> progress){
+ LanFolderSync(Context context,LanPeer peer,Mode mode,String archiveKey,Consumer<String> progress){
   this.context=context;
   this.peer=peer;
   this.mode=mode;
+  this.archiveKey=archiveKey;
   this.progress=progress;
  }
 
@@ -35,7 +37,7 @@ final class LanFolderSync {
  }
 
  String run(Uri uri)throws Exception{
-  versions=new LanVersions(context,peer.identity,uri.toString());
+  versions=new LanVersions(context,archiveKey,uri.toString());
   DocumentFile folder=DocumentFile.fromTreeUri(context,uri);
   if(folder==null||!folder.isDirectory()||!FolderSync.writable(context.getContentResolver(),uri))
    throw new IOException("Choose a writable phone folder again.");
@@ -43,6 +45,7 @@ final class LanFolderSync {
   scan(folder,"",0);
   progress.accept("Checking PC files…");
   JSONObject inventory=peer.inventory(),pcFiles=inventory.getJSONObject("files");
+  if(inventory.optInt("resume")==1)peer.enableResume(context.getCacheDir(),archiveKey+"\n"+uri);
   skipped+=inventory.getInt("skipped");
   if(pcFiles.length()>MAX_ITEMS)throw new IOException("PC folder has too many files.");
   Set<String> paths=new TreeSet<>(phoneFiles.keySet());
