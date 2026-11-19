@@ -25,7 +25,9 @@ final class LanPeer {
   for(String part:octets)if(!part.matches("0|[1-9][0-9]{0,2}")||Integer.parseInt(part)>255)
    throw new IllegalArgumentException("Invalid PC address.");
   int a=Integer.parseInt(octets[0]),b=Integer.parseInt(octets[1]),port=Integer.parseInt(endpoint[1]);
-  if(port<1||port>65535||!(a==10||a==172&&b>=16&&b<=31||a==192&&b==168))
+  // Debug builds can exercise the same protocol using an ADB reverse port.
+  boolean localTest=BuildConfig.DEBUG&&endpoint[0].equals("127.0.0.1");
+  if(port<1||port>65535||!(localTest||a==10||a==172&&b>=16&&b<=31||a==192&&b==168))
    throw new IllegalArgumentException("Use a private Wi-Fi address and a valid port.");
   host=endpoint[0];
   address="https://"+host+":"+port;
