@@ -8,10 +8,35 @@ import java.nio.charset.StandardCharsets;
 
 final class Graph {
  static final String ROOT="https://graph.microsoft.com/v1.0";
- private final String token;
+ interface TokenSource { String acquire(boolean forceRefresh)throws Exception; }
+ interface AuthorizedRequest<T> { T send(String token)throws Exception; }
+
+ static final class Authorization {
+  private final TokenSource source;
+  private String token;
+
+  Authorization(TokenSource source){this.source=source;}
+
+  <T> T send(AuthorizedRequest<T> request)throws Exception{
+   BackupCancellation.check();
+   if(token==null)token=source.acquire(false);
+   try{return request.send(token);}
+   catch(HttpError error){if(error.status!=401)throw error;}
+   BackupCancellation.check();
+   token=source.acquire(true);
+   BackupCancellation.check();
+   try{return request.send(token);}
+   catch(HttpError error){
+    if(error.status==401)throw new Auth.SignInRequired();
+    throw error;
+   }
+  }
+ }
+
+ private final Authorization authorization;
  private UploadSession uploads;
  void enableResumableUploads(android.content.Context context,String pair,UploadSession.ProgressListener progress){uploads=new UploadSession(this,context,pair,progress);}
- Graph(String token){this.token=token;}
+ Graph(TokenSource tokens){authorization=new Authorization(tokens);}
  static final class HttpError extends IOException {
   final int status;
   HttpError(int status){super("OneDrive returned HTTP "+status);this.status=status;}
@@ -23,6 +48,9 @@ final class Graph {
   return request(method,address,data,type,null);
  }
  JSONObject request(String method,String address,byte[] data,String type,String ifMatch)throws Exception{
+  return authorization.send(token->sendJson(method,address,data,type,ifMatch,token));
+ }
+ private JSONObject sendJson(String method,String address,byte[] data,String type,String ifMatch,String token)throws Exception{
   BackupCancellation.check();
   URI uri=URI.create(address);
   if(!"https".equals(uri.getScheme())||!"graph.microsoft.com".equals(uri.getHost()))throw new IOException("Untrusted Graph address");
@@ -39,7 +67,10 @@ final class Graph {
    }
   }finally{c.disconnect();}
  }
- String contentHash(String itemId)throws Exception{return RemoteContent.sha256(ROOT+"/me/drive/items/"+Uri.encode(itemId)+"/content",token);}
+ String contentHash(String itemId)throws Exception{
+  String address=ROOT+"/me/drive/items/"+Uri.encode(itemId)+"/content";
+  return authorization.send(token->RemoteContent.sha256(address,token));
+ }
  JSONObject item(String parent,String name) throws Exception {return json("GET","/me/drive/items/"+Uri.encode(parent)+":/"+Uri.encode(name),null);}
  String folder(String parent,String name) throws Exception {
   BackupRules.validateName(name);
@@ -49,7 +80,10 @@ final class Graph {
   catch(HttpError e){if(e.status!=409)throw e;return requireFolder(item(parent,name));}
  }
  private String requireFolder(JSONObject item)throws Exception{if(!item.has("folder"))throw new IOException("A file blocks the destination folder");return item.getString("id");}
- String download(String itemId,File destination)throws Exception{return RemoteContent.download(ROOT+"/me/drive/items/"+Uri.encode(itemId)+"/content",token,destination);}
+ String download(String itemId,File destination)throws Exception{
+  String address=ROOT+"/me/drive/items/"+Uri.encode(itemId)+"/content";
+  return authorization.send(token->RemoteContent.download(address,token,destination));
+ }
  JSONObject resumeUpload(String parent,String name,File file,String hash)throws Exception{
   if(uploads==null||file.length()<=10L*1024*1024)return null;
   String path="/me/drive/items/"+Uri.encode(parent)+":/"+Uri.encode(name)+":";
@@ -65,6 +99,9 @@ final class Graph {
   return putFile(ROOT+"/me/drive/items/"+Uri.encode(id)+"/content",file,expectedTag);
  }
  private JSONObject putFile(String address,File file,String ifMatch)throws Exception{
+  return authorization.send(token->sendFile(address,file,ifMatch,token));
+ }
+ private JSONObject sendFile(String address,File file,String ifMatch,String token)throws Exception{
   BackupCancellation.check();
   long size=file.length();
   BackupRules.requireFileSize(size);
