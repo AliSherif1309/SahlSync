@@ -63,17 +63,17 @@ jobs:
       - name: Test, build and sign the OneDrive APK
         if: steps.version.outputs.publish == 'true'
         env:
-          KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
-          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
-          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
-          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_BASE64 || secrets.KEYSTORE_B64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD || secrets.KEYSTORE_PASS }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS || secrets.KEYSTORE_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD || secrets.KEY_PASS }}
           MSAL_CLIENT_ID: ${{ vars.MSAL_CLIENT_ID || '71615e44-4238-43e9-a53e-441e699a2ed3' }}
           MSAL_SIGNATURE: ${{ vars.MSAL_SIGNATURE || 'D7dAFIHlMCL0tzHTRGVYfaUmmic=' }}
           VERSION: ${{ steps.version.outputs.name }}
           VERSION_CODE: ${{ steps.version.outputs.code }}
         run: |
           set -euo pipefail
-          for name in KEYSTORE_B64 SIGNING_STORE_PASSWORD SIGNING_KEY_ALIAS SIGNING_KEY_PASSWORD; do
+          for name in KEYSTORE_B64 SIGNING_STORE_PASSWORD; do
             if [[ -z "${!name}" ]]; then
               echo "::error::Missing signing input: $name. See the release setup in README."
               exit 1
@@ -84,6 +84,19 @@ jobs:
           trap 'rm -f "$keystore"' EXIT
           printf '%s' "$KEYSTORE_B64" | base64 -d > "$keystore"
           unset KEYSTORE_B64
+          if [[ -z "$SIGNING_KEY_ALIAS" ]]; then
+            entries=$(keytool -J-Duser.language=en -J-Duser.country=US -list -v -keystore "$keystore" -storepass:env SIGNING_STORE_PASSWORD)
+            mapfile -t aliases < <(printf '%s\n' "$entries" | awk '
+              /^Alias name: / { alias = substr($0, 13) }
+              /^Entry type: PrivateKeyEntry$/ { print alias }
+            ')
+            if [[ "${#aliases[@]}" != 1 || -z "${aliases[0]}" ]]; then
+              echo "::error::Set SIGNING_KEY_ALIAS when the keystore does not have exactly one private key."
+              exit 1
+            fi
+            SIGNING_KEY_ALIAS="${aliases[0]}"
+          fi
+          export SIGNING_KEY_PASSWORD="${SIGNING_KEY_PASSWORD:-$SIGNING_STORE_PASSWORD}"
           signature=$(keytool -exportcert -keystore "$keystore" -alias "$SIGNING_KEY_ALIAS" -storepass:env SIGNING_STORE_PASSWORD |
             openssl dgst -sha1 -binary | base64 -w 0)
           if [[ "$signature" != "$MSAL_SIGNATURE" ]]; then

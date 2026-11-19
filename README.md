@@ -27,12 +27,12 @@ See [Microsoft setup](docs/MICROSOFT_SETUP.md) for account registration and loca
 
 ## Publish a release
 
-Set these repository Actions secrets for the designated Sahl Sync signing key:
+Set the repository Actions secrets for the designated Sahl Sync signing key:
 
-- `SIGNING_KEYSTORE_BASE64`
-- `SIGNING_STORE_PASSWORD`
-- `SIGNING_KEY_ALIAS`
-- `SIGNING_KEY_PASSWORD`
+- `KEYSTORE_B64` or `SIGNING_KEYSTORE_BASE64`
+- `KEYSTORE_PASS` or `SIGNING_STORE_PASSWORD`
+
+For a keystore with one private key that shares the store password, those two are sufficient. If there are multiple private keys, set `SIGNING_KEY_ALIAS` (or `KEYSTORE_ALIAS`). If the chosen key has a separate password, set `SIGNING_KEY_PASSWORD` (or `KEY_PASS`).
 
 Register the release certificate's Base64 SHA-1 hash for Android package `com.aly.sahlsync` in Microsoft Entra. If it differs from the local test registration, set the `MSAL_SIGNATURE` repository variable to the registered release hash. Set `MSAL_CLIENT_ID` if using a separate Microsoft application registration. The release job verifies the signing key and manifest before publication.
 
