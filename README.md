@@ -4,7 +4,7 @@ Sahl Sync pairs Android folders with Microsoft OneDrive. It supports upload only
 
 ## Install and update
 
-Download the signed APK from [GitHub Releases](https://github.com/AliSherif1309/SahlSync/releases). Preview builds are marked as pre-releases. In the app, tap **Check for updates** to list the newest published APK by Android version code and open its release page. Android requires matching package and signing certificates for an in-place update. If you installed a local test build signed with a different key, keep it installed until you have a migration plan for your settings.
+Download the signed APK from [GitHub Releases](https://github.com/AliSherif1309/SahlSync/releases). Preview builds are marked as pre-releases. In the app, tap **Check for updates** to open the newest release. If you’re switching from a locally signed test build, save your settings before reinstalling.
 
 ## Features and limits
 
@@ -17,23 +17,10 @@ Download the signed APK from [GitHub Releases](https://github.com/AliSherif1309/
 
 ## Build from source
 
-Use JDK 17, Android SDK 36 and Gradle 9.5.0. The package is `com.aly.sahlsync`.
+Use JDK 17, Android SDK 36 and Gradle 9.5.0.
 
 ```sh
 gradle testDebugUnitTest lintDebug assembleDebug
 ```
 
 See [Microsoft setup](docs/MICROSOFT_SETUP.md) for account registration and local testing.
-
-## Publish a release
-
-Set the repository Actions secrets for the designated Sahl Sync signing key:
-
-- `KEYSTORE_B64` or `SIGNING_KEYSTORE_BASE64`
-- `KEYSTORE_PASS` or `SIGNING_STORE_PASSWORD`
-
-For a keystore with one private key that shares the store password, those two are sufficient. If there are multiple private keys, set `SIGNING_KEY_ALIAS` (or `KEYSTORE_ALIAS`). If the chosen key has a separate password, set `SIGNING_KEY_PASSWORD` (or `KEY_PASS`).
-
-Register the release certificate's Base64 SHA-1 hash for Android package `com.aly.sahlsync` in Microsoft Entra. If it differs from the local test registration, set the `MSAL_SIGNATURE` repository variable to the registered release hash. Set `MSAL_CLIENT_ID` if using a separate Microsoft application registration. The release job verifies the signing key and manifest before publication.
-
-Bump both `versionName` and `versionCode` in `app/build.gradle`. Merging the version change to `main` builds, signs, verifies and publishes a numbered release with the APK and SHA-256 checksum. You can also run **Publish Sahl Sync release** manually from `main`. A previously published tag is left intact. Alpha and beta versions are published as pre-releases.
