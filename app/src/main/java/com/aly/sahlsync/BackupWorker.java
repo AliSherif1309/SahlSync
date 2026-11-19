@@ -10,6 +10,7 @@ import com.microsoft.identity.client.exception.*;
 import org.json.*;
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 public final class BackupWorker extends Worker {
@@ -56,6 +57,8 @@ public final class BackupWorker extends Worker {
      }else if(getInputData().getBoolean("legacyDaily",false)&&!pair.optBoolean("daily"))return Result.success();
     }
     folderName=pair.optString("name","Sahl Sync");
+    if(!isScheduled())startManualForeground(c);
+    BackupCancellation.check();
     IAuthenticationResult auth=Auth.token(Auth.open(c),pair.getString("account"));
     if(!auth.getAccount().getId().equals(pair.getString("account")))throw new Auth.SignInRequired();
     DocumentFile local=DocumentFile.fromTreeUri(c,Uri.parse(pair.getString("local")));
@@ -130,11 +133,26 @@ public final class BackupWorker extends Worker {
   return Result.failure();
  }
 
+ private boolean isScheduled(){
+  Data input=getInputData();
+  return input.getString("scheduleGeneration")!=null||input.getBoolean("legacyDaily",false);
+ }
+
+ private void startManualForeground(Context context)throws InterruptedException,ExecutionException{
+  int notificationId=0x40000000|(getId().hashCode()&0x3fffffff);
+  try{
+   setForegroundAsync(BackupNotifications.running(context,notificationId,folderName)).get();
+  }catch(ExecutionException error){
+   // A constrained or retried job can start after the app has already gone into the background.
+   // If Android declines foreground promotion, keep the scheduled work and its retry checkpoints.
+   if(!(error.getCause() instanceof IllegalStateException))throw error;
+   android.util.Log.w("SahlSync","Android declined foreground promotion for a manual backup.");
+  }
+ }
+
  private void notifyResult(String summary){
   if(isStopped())return;
-  Data input=getInputData();
-  boolean scheduled=input.getString("scheduleGeneration")!=null||input.getBoolean("legacyDaily",false);
-  BackupNotifications.finished(getApplicationContext(),input.getString("pair"),folderName,scheduled,summary);
+  BackupNotifications.finished(getApplicationContext(),getInputData().getString("pair"),folderName,isScheduled(),summary);
  }
 
  private static String failureHint(Exception e){
