@@ -16,8 +16,8 @@ import tempfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-LIMIT = 224 * 1024 * 1024
-MAX_ITEMS = 5000
+LIMIT = 2048 * 1024 * 1024
+MAX_ITEMS = 20000
 BLOCK = 64 * 1024
 HASH = re.compile(r"[0-9a-f]{64}\Z")
 RESERVED = re.compile(r"(?i)(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\..*)?\Z")

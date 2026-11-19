@@ -26,7 +26,7 @@ final class ScheduleEditor {
   mode=new Spinner(activity);
   mode.setContentDescription("Backup schedule");
   ArrayAdapter<String> options=new ArrayAdapter<>(activity,android.R.layout.simple_spinner_item,
-   new String[]{"Manual only","Once on a date","Every day","Selected weekdays"});
+   new String[]{"Manual only","Once on a date","Every day","Selected weekdays","Every hour","Every 6 hours"});
   options.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
   mode.setAdapter(options);
   form.addView(SahlTheme.label(activity,"Backup schedule",16,SahlTheme.TEXT));
@@ -66,7 +66,7 @@ final class ScheduleEditor {
  private String timeLabel(){return "Time: "+time.format(DateTimeFormatter.ofLocalizedTime(java.time.format.FormatStyle.SHORT));}
  private void updateVisibility(int selected){
   dateButton.setVisibility(selected==1?View.VISIBLE:View.GONE);
-  timeButton.setVisibility(selected!=0?View.VISIBLE:View.GONE);
+  timeButton.setVisibility(selected>=1&&selected<=3?View.VISIBLE:View.GONE);
   days.setVisibility(selected==3?View.VISIBLE:View.GONE);
  }
 
@@ -82,10 +82,11 @@ final class ScheduleEditor {
   long dateTime=date.atTime(time).atZone(zone).toInstant().toEpochMilli();
   if(selected==1&&dateTime<=now.toEpochMilli())
    throw new IllegalArgumentException("Pick a future date and time for the one-time backup.");
-  long due=selected==1?dateTime:mask==0?0:BackupSchedule.next(now,zone,time.getHour(),time.getMinute(),mask);
+  long interval=selected==4?3600_000L:selected==5?6*3600_000L:0;
+  long due=interval>0?now.toEpochMilli()+interval:selected==1?dateTime:mask==0?0:BackupSchedule.next(now,zone,time.getHour(),time.getMinute(),mask);
   pair.put("daily",false).put("scheduleMode",selected).put("scheduleDate",dateTime)
    .put("scheduleHour",time.getHour()).put("scheduleMinute",time.getMinute())
-   .put("scheduleDays",mask).put("scheduleGeneration",selected==0?"":UUID.randomUUID().toString());
+   .put("scheduleDays",mask).put("scheduleInterval",interval).put("scheduleGeneration",selected==0?"":UUID.randomUUID().toString());
   return due;
  }
 }
