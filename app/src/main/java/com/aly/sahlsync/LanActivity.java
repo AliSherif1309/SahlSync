@@ -20,6 +20,9 @@ public final class LanActivity extends Activity {
  private static final ExecutorService executor=Executors.newSingleThreadExecutor();
  private static boolean running;
  private static volatile boolean stopRequested;
+ private androidx.lifecycle.Observer<java.util.List<androidx.work.WorkInfo>> watcher;
+ private androidx.lifecycle.LiveData<java.util.List<androidx.work.WorkInfo>> watched;
+ @Override protected void onDestroy(){if(watched!=null&&watcher!=null)watched.removeObserver(watcher);ticker.removeCallbacksAndMessages(null);super.onDestroy();}
  private ProgressBar bar,fileBar;
  private Button stop;
  private final android.os.Handler ticker=new android.os.Handler(android.os.Looper.getMainLooper());
@@ -100,7 +103,19 @@ public final class LanActivity extends Activity {
   bytes=SahlTheme.label(this,"",13,SahlTheme.MUTED);bytes.setVisibility(android.view.View.GONE);content.addView(bytes);
   progress=SahlTheme.label(this,"",16,SahlTheme.TEXT);
   content.addView(progress);
-  stop=SahlTheme.secondary(this,"Stop",()->{stopRequested=true;progress.setText(Tr.t(this,"Stopping after the current step…"));});
+  stop=SahlTheme.secondary(this,"Stop",()->{
+   androidx.work.WorkManager.getInstance(getApplicationContext()).cancelUniqueWork(LanWorker.MANUAL);
+   progress.setText(Tr.t(this,"Stopping after the current step…"));});
+  (watched=androidx.work.WorkManager.getInstance(getApplicationContext()).getWorkInfosForUniqueWorkLiveData(LanWorker.MANUAL)).observeForever(watcher=infos->{
+   boolean active=false;String label=null;
+   for(androidx.work.WorkInfo info:infos){
+    if(!info.getState().isFinished())active=true;
+    String value=info.getProgress().getString("label");if(value!=null)label=value;
+   }
+   boolean was=running;running=active;
+   if(active&&label!=null)progress.setText(Tr.t(this,label));
+   if(was!=active)refresh();
+  });
   stop.setVisibility(android.view.View.GONE);
   content.addView(stop);
   refresh();
@@ -408,28 +423,10 @@ public final class LanActivity extends Activity {
    }else if(selected.ready())queue.add(selected);
   }catch(Exception error){progress.setText("Could not load Wi-Fi folder pairs.");return;}
   if(queue.isEmpty())return;
-  running=true;stopRequested=false;
+  List<String> ids=new ArrayList<>();for(LanPairs.Pair item:queue)ids.add(item.id);
+  LanWorker.runNow(getApplicationContext(),ids);
+  running=true;
   progress.setText(Tr.t(this,"Starting…"));
   refresh();
-  getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-  executor.execute(()->{
-   for(LanPairs.Pair item:queue){
-    if(stopRequested)break;
-    synchronized(LanWorker.class){
-     BackupCancellation.bind(()->stopRequested);
-     LanRunner.run(getApplicationContext(),pairs,item,
-      label->runOnUiThread(()->{if(!isDestroyed())progress.setText(item.name+"\n"+Tr.t(this,label));}));
-     BackupCancellation.clear();
-     if(stopRequested){item.result=Tr.t(this,"Stopped. The next sync continues where it left off.");try{pairs.update(item);}catch(Exception ignored){}}
-    }
-   }
-   runOnUiThread(()->{
-    running=false;
-    if(!isDestroyed()){
-     getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-     refresh();
-    }
-   });
-  });
  }
 }
