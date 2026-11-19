@@ -139,13 +139,13 @@ public final class BackupWorker extends Worker {
 
  private static String failureHint(Exception e){
   if(e instanceof IllegalArgumentException)return "Check unsupported file names.";
-  return "Check folder access, free storage and the 128 MiB file limit.";
+  return "Check folder access, free storage and the "+BackupRules.MAX_FILE_MIB+" MiB file limit.";
  }
  private void walk(Context c,Graph graph,Uri source,String remote,String path,JSONObject pair,int depth)throws Exception{
   if(depth>32||!seen.add(source.toString()))throw new IOException("Folder nesting limit reached");
   // Use the provider cursor directly: listFiles() can silently return an empty array on a failed query.
   Uri children=android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(source,android.provider.DocumentsContract.getDocumentId(source));
-  try(android.database.Cursor cursor=c.getContentResolver().query(children,new String[]{android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID,android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME,android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE},null,null,null)){
+  try(android.database.Cursor cursor=c.getContentResolver().query(children,new String[]{android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID,android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME,android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE,android.provider.DocumentsContract.Document.COLUMN_SIZE},null,null,null)){
    if(cursor==null)throw new IOException("Cannot list local folder");
    while(cursor.moveToNext()){
     if(isStopped()||Thread.currentThread().isInterrupted())throw new InterruptedException();
@@ -156,7 +156,15 @@ public final class BackupWorker extends Worker {
     Uri uri=android.provider.DocumentsContract.buildDocumentUriUsingTree(source,cursor.getString(0));
     if(android.provider.DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(2))){
      walk(c,graph,uri,graph.folder(remote,name),relative+"/",pair,depth+1);
-    }else upload(c,graph,uri,remote,name,relative,pair);
+    }else{
+     try{
+      BackupRules.requireFileSize(cursor.getLong(3));
+      upload(c,graph,uri,remote,name,relative,pair);
+     }catch(BackupRules.FileTooLarge error){
+      excluded++;
+      Store.history(c,getInputData().getString("pair"),relative+": skipped (over "+BackupRules.MAX_FILE_MIB+" MiB).");
+     }
+    }
    }
   }
  }

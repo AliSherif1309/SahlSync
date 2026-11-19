@@ -52,9 +52,9 @@ final class FolderSync {
  private static final class Local {
   final Uri uri;
   final String name,mime;
-  final long modified;
-  Local(Uri uri,String name,String mime,long modified){
-   this.uri=uri;this.name=name;this.mime=mime;this.modified=modified;
+  final long modified,size;
+  Local(Uri uri,String name,String mime,long modified,long size){
+   this.uri=uri;this.name=name;this.mime=mime;this.modified=modified;this.size=size;
   }
   boolean directory(){return Document.MIME_TYPE_DIR.equals(mime);}
  }
@@ -62,7 +62,7 @@ final class FolderSync {
  private Map<String,Local> localChildren(Uri parent)throws IOException{
   Map<String,Local> result=new LinkedHashMap<>();
   Uri children=DocumentsContract.buildChildDocumentsUriUsingTree(parent,DocumentsContract.getDocumentId(parent));
-  String[] columns={Document.COLUMN_DOCUMENT_ID,Document.COLUMN_DISPLAY_NAME,Document.COLUMN_MIME_TYPE,Document.COLUMN_LAST_MODIFIED};
+  String[] columns={Document.COLUMN_DOCUMENT_ID,Document.COLUMN_DISPLAY_NAME,Document.COLUMN_MIME_TYPE,Document.COLUMN_LAST_MODIFIED,Document.COLUMN_SIZE};
   try(android.database.Cursor rows=resolver.query(children,columns,null,null,null)){
    if(rows==null)throw new IOException("Cannot list phone folder");
    while(rows.moveToNext()){
@@ -71,7 +71,7 @@ final class FolderSync {
     if(name==null)throw new IOException("Phone file name is unavailable");
     String key=key(name);
     Uri uri=DocumentsContract.buildDocumentUriUsingTree(parent,rows.getString(0));
-    if(result.put(key,new Local(uri,name,rows.getString(2),rows.getLong(3)))!=null)
+    if(result.put(key,new Local(uri,name,rows.getString(2),rows.getLong(3),rows.getLong(4)))!=null)
      throw new IOException("Phone folder has names that differ only by case");
    }
   }
@@ -131,12 +131,18 @@ final class FolderSync {
    }
    try{syncFile(parent,drive,name,relative,phone,remote);}
    catch(Graph.HttpError e){if(e.status!=409&&e.status!=412)throw e;conflict(relative,"OneDrive changed during sync. Retry after reviewing both copies.");}
+   catch(BackupRules.FileTooLarge e){
+    excluded++;
+    Store.history(context,pairId,relative+": skipped (over "+BackupRules.MAX_FILE_MIB+" MiB).");
+   }
    catch(LocalConflict e){conflict(relative,e.getMessage());}
   }
  }
 
  private void syncFile(Uri parent,String drive,String name,String path,Local phone,JSONObject cloud)throws Exception{
   if(cloud==null&&direction==SyncDirection.DOWNLOAD)return;
+  if(phone!=null)BackupRules.requireFileSize(phone.size);
+  if(cloud!=null)BackupRules.requireFileSize(cloud.optLong("size",-1));
   File local=null;
   try{
    String localHash=null;
@@ -213,7 +219,8 @@ final class FolderSync {
  private void download(Uri parent,String drive,String name,String path,Local original,String originalHash,
   VersionedBackup.Item remote)throws Exception{
   requireTag(remote);
-  if(remote.size<0||remote.size>BackupRules.MAX_FILE_BYTES)throw new LocalConflict("File exceeds the sync size limit.");
+  if(remote.size<0)throw new LocalConflict("OneDrive did not report a valid file size.");
+  BackupRules.requireFileSize(remote.size);
   File staged=File.createTempFile("sync-cloud-",".tmp",context.getCacheDir());
   Uri temporary=null;
   boolean published=false;

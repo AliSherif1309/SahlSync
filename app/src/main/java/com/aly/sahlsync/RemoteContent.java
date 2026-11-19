@@ -33,7 +33,7 @@ final class RemoteContent {
      address=address.resolve(location);continue;
     }
     if(code!=200)throw new IOException("Content verification returned HTTP "+code);
-    if(connection.getContentLengthLong()>BackupRules.MAX_FILE_BYTES)throw new IOException("Remote file exceeds verification limit");
+    BackupRules.requireFileSize(connection.getContentLengthLong());
     try(InputStream in=connection.getInputStream()){return BackupRules.hash(in,output);}
    }finally{connection.disconnect();}
   }
