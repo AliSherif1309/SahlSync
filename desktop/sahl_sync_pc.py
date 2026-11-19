@@ -14,6 +14,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 APP = "Sahl Sync for PC"
+VERSION = "1.0.0"
 STATE = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "SahlSync"
 SETTINGS = STATE / "pc.json"
 PAIRING = STATE / "pairing.json"
@@ -84,7 +85,7 @@ class App:
         style.map("Gold.TButton", background=[("active", "#F0CB7A")])
 
         tk.Label(root, text="Sahl Sync for PC", bg=BG, fg=GOLD, font=("Segoe UI", 18, "bold")).pack(anchor="w", padx=20, pady=(16, 0))
-        tk.Label(root, text="Share folders with your phone over home Wi-Fi.", bg=BG, fg=MUTED, font=("Segoe UI", 10)).pack(anchor="w", padx=20)
+        tk.Label(root, text=f"Share folders with your phone over home Wi-Fi.  v{VERSION}", bg=BG, fg=MUTED, font=("Segoe UI", 10)).pack(anchor="w", padx=20)
 
         net = tk.Frame(root, bg=BG)
         net.pack(fill="x", padx=20, pady=(14, 4))

@@ -26,7 +26,7 @@ final class ScheduleEditor {
   mode=new Spinner(activity);
   mode.setContentDescription("Backup schedule");
   ArrayAdapter<String> options=new ArrayAdapter<>(activity,android.R.layout.simple_spinner_item,
-   new String[]{"Manual only","Once on a date","Every day","Selected weekdays","Every hour","Every 6 hours"});
+   new String[]{"Manual only","Once on a date","Every day","Selected weekdays","Every hour","Every 6 hours","Every 15 minutes"});
   options.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
   mode.setAdapter(options);
   form.addView(SahlTheme.label(activity,"Backup schedule",16,SahlTheme.TEXT));
@@ -82,7 +82,7 @@ final class ScheduleEditor {
   long dateTime=date.atTime(time).atZone(zone).toInstant().toEpochMilli();
   if(selected==1&&dateTime<=now.toEpochMilli())
    throw new IllegalArgumentException("Pick a future date and time for the one-time backup.");
-  long interval=selected==4?3600_000L:selected==5?6*3600_000L:0;
+  long interval=selected==4?3600_000L:selected==5?6*3600_000L:selected==6?15*60_000L:0;
   long due=interval>0?now.toEpochMilli()+interval:selected==1?dateTime:mask==0?0:BackupSchedule.next(now,zone,time.getHour(),time.getMinute(),mask);
   pair.put("daily",false).put("scheduleMode",selected).put("scheduleDate",dateTime)
    .put("scheduleHour",time.getHour()).put("scheduleMinute",time.getMinute())

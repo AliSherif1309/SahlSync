@@ -1,10 +1,10 @@
 # Sahl Sync
 
-Sahl Sync pairs Android folders with Microsoft OneDrive. It supports upload only, download only, and optional newest-wins two-way sync.
+Sahl Sync keeps Android folders in sync with Microsoft OneDrive and with your Windows PC over Wi-Fi. Each folder can be upload only, download only, or two-way (newest wins, deletions included).
 
 ## Install and update
 
-Download the signed APK from [GitHub Releases](https://github.com/AliSherif1309/SahlSync/releases). Preview builds are marked as pre-releases. In the app, tap **Check for updates** to open the newest release. If you’re switching from a locally signed test build, save your settings before reinstalling.
+Download the signed APK from [GitHub Releases](https://github.com/AliSherif1309/SahlSync/releases). In the app, tap **Check for updates** to open the newest release. If you’re switching from a locally signed test build, save your settings before reinstalling.
 
 ## Features and limits
 

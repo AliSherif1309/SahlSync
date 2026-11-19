@@ -40,27 +40,29 @@ public final class LanActivity extends Activity {
   content.setPadding(padding,padding,padding,padding);
   scroll.addView(content);
   setContentView(scroll);
-  content.addView(SahlTheme.label(this,"Local Wi-Fi sync",25,SahlTheme.TEXT));
-  selectPair=SahlTheme.button(this,"",this::choosePair);
+  content.addView(SahlTheme.label(this,"Sync with my PC",26,SahlTheme.TEXT));
+  selectPair=SahlTheme.secondary(this,"",this::choosePair);
   content.addView(selectPair);
-  addPair=SahlTheme.button(this,"Add folder pair",this::addPair);
+  addPair=SahlTheme.secondary(this,"Add folder pair",this::addPair);
   content.addView(addPair);
   connection=SahlTheme.label(this,"",15,SahlTheme.MUTED);
   content.addView(connection);
   content.addView(SahlTheme.button(this,"Scan QR from PC",this::scanCode));
-  pair=SahlTheme.button(this,"Enter pairing code",()->enterCode(""));
+  pair=SahlTheme.secondary(this,"Enter pairing code",()->enterCode(""));
   content.addView(pair);
   folder=SahlTheme.label(this,"",15,SahlTheme.MUTED);
   content.addView(folder);
-  pick=SahlTheme.button(this,"Choose phone folder",this::pickFolder);
+  pick=SahlTheme.secondary(this,"Choose phone folder",this::pickFolder);
   content.addView(pick);
-  mode=SahlTheme.button(this,"",this::chooseMode);
+  mode=SahlTheme.secondary(this,"",this::chooseMode);
   content.addView(mode);
+  options=SahlTheme.secondary(this,"Auto sync & options",this::chooseOptions);
+  content.addView(options);
   sync=SahlTheme.button(this,"Sync now",()->startSync(false));
   content.addView(sync);
-  syncAll=SahlTheme.button(this,"Sync all folders",()->startSync(true));
+  syncAll=SahlTheme.secondary(this,"Sync all folders",()->startSync(true));
   content.addView(syncAll);
-  history=SahlTheme.button(this,"Version history",this::showVersions);
+  history=SahlTheme.secondary(this,"Version history",this::showVersions);
   content.addView(history);
   lastRun=SahlTheme.label(this,"",15,SahlTheme.MUTED);
   content.addView(lastRun);
@@ -83,9 +85,11 @@ public final class LanActivity extends Activity {
    progress.setText(running?"Sync is running.":selected.result);
    lastRun.setText(selected.lastCompleted==0?"":"Last completed sync: "+
     java.text.DateFormat.getDateTimeInstance().format(new java.util.Date(selected.lastCompleted)));
-   mode.setText("Sync mode: "+selectedMode().label);
+   mode.setText("Direction: "+selectedMode().label);
+   options.setText("Auto sync: "+autoLabel(selected.autoMinutes)+(selected.deletions?" · Deletions sync":" · Deletions off"));
    syncAll.setVisibility(all.size()>1?android.view.View.VISIBLE:android.view.View.GONE);
    setControls(!running);
+   LanWorker.schedule(getApplicationContext(),selected);
    history.setEnabled(!running&&selected.ready());
    sync.setEnabled(!running&&selected.ready());
    syncAll.setEnabled(!running&&all.stream().anyMatch(LanPairs.Pair::ready));
@@ -96,7 +100,36 @@ public final class LanActivity extends Activity {
  }
 
  private void setControls(boolean enabled){
-  for(Button button:new Button[]{selectPair,addPair,pair,pick,mode,sync,syncAll,history})button.setEnabled(enabled);
+  for(Button button:new Button[]{selectPair,addPair,pair,pick,mode,options,sync,syncAll,history})button.setEnabled(enabled);
+ }
+
+ private Button options;
+ private static final int[] AUTO={0,15,60,360,1440};
+ private static String autoLabel(int minutes){
+  return minutes<=0?"Off":minutes<60?"every "+minutes+" min":minutes<1440?"every "+(minutes/60)+" h":"daily";
+ }
+ private void chooseOptions(){
+  LanPairs.Pair target=selected;
+  LinearLayout form=new LinearLayout(this);form.setOrientation(LinearLayout.VERTICAL);
+  int pad=SahlTheme.dp(this,20);form.setPadding(pad,pad,pad,0);
+  form.addView(SahlTheme.label(this,"Auto sync (on Wi-Fi, in the background)",15,SahlTheme.TEXT));
+  Spinner auto=new Spinner(this);
+  String[] labels=new String[AUTO.length];for(int i=0;i<AUTO.length;i++)labels[i]=autoLabel(AUTO[i]);
+  ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,labels);auto.setAdapter(adapter);
+  for(int i=0;i<AUTO.length;i++)if(AUTO[i]==target.autoMinutes)auto.setSelection(i);
+  form.addView(auto);
+  CheckBox charging=new CheckBox(this);charging.setText("Auto sync only while charging");charging.setChecked(target.autoCharging);form.addView(charging);
+  CheckBox deletions=new CheckBox(this);deletions.setText("Sync deletions (two-way mode). Deleted files stay in Version history.");
+  deletions.setChecked(target.deletions);form.addView(deletions);
+  EditText name=new EditText(this);name.setHint("Folder pair name");name.setText(target.name);name.setSingleLine(true);form.addView(name);
+  new AlertDialog.Builder(this).setTitle("Options").setView(form).setNegativeButton("Cancel",null).setPositiveButton("Save",(d,w)->{
+   target.autoMinutes=AUTO[auto.getSelectedItemPosition()];
+   target.autoCharging=charging.isChecked();
+   target.deletions=deletions.isChecked();
+   String title=name.getText().toString().trim();if(!title.isEmpty())target.name=title;
+   try{pairs.update(target);LanWorker.schedule(getApplicationContext(),target);}catch(Exception e){progress.setText("Could not save options.");}
+   refresh();
+  }).show();
  }
 
  private void choosePair(){
@@ -252,10 +285,7 @@ public final class LanActivity extends Activity {
    }).setNegativeButton("Cancel",null).show();
  }
 
- private String archiveKey(LanPairs.Pair item,LanPeer peer){
-  if(item.legacyArchive)return peer.identity;
-  return item.archiveKey.isEmpty()?item.id:item.archiveKey;
- }
+ private String archiveKey(LanPairs.Pair item,LanPeer peer){return LanRunner.archiveKey(item,peer);}
 
  private LanVersions versions(LanPairs.Pair item)throws Exception{
   return new LanVersions(getApplicationContext(),archiveKey(item,new LanPeer(item.code)),item.tree);
@@ -328,22 +358,10 @@ public final class LanActivity extends Activity {
   getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
   executor.execute(()->{
    for(LanPairs.Pair item:queue){
-    try{
-     LanPeer peer=new LanPeer(item.code);
-     item.result=new LanFolderSync(getApplicationContext(),peer,LanFolderSync.Mode.from(item.mode),archiveKey(item,peer),
-      label->runOnUiThread(()->{if(!isDestroyed())progress.setText(item.name+"\n"+label);})).run(Uri.parse(item.tree));
-     item.lastCompleted=System.currentTimeMillis();
-    }catch(SSLHandshakeException error){
-     item.result="Could not verify the PC identity. Check the pairing code.";
-    }catch(java.net.ConnectException|java.net.SocketTimeoutException error){
-     item.result="Could not reach the PC. Check Wi-Fi and the Windows companion, then retry.";
-    }catch(Exception error){
-     item.result=error.getMessage();
-     if(item.result==null||item.result.isEmpty())item.result="Local sync could not finish.";
+    synchronized(LanWorker.class){
+     LanRunner.run(getApplicationContext(),pairs,item,
+      label->runOnUiThread(()->{if(!isDestroyed())progress.setText(item.name+"\n"+label);}));
     }
-    runOnUiThread(()->{
-     try{pairs.update(item);}catch(Exception error){if(!isDestroyed())progress.setText("Could not save the sync result.");}
-    });
    }
    runOnUiThread(()->{
     running=false;

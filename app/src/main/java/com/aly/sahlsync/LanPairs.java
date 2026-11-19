@@ -17,6 +17,8 @@ final class LanPairs {
   String name,code="",tree="",mode="",result="",archiveKey="";
   boolean legacyArchive;
   long lastCompleted;
+  int autoMinutes;
+  boolean deletions=true,autoCharging;
   Pair(String id,String name){this.id=id;this.name=name;}
   boolean ready(){return !code.isEmpty()&&!tree.isEmpty();}
  }
@@ -42,6 +44,7 @@ final class LanPairs {
    pair.code=value.optString("code");pair.tree=value.optString("tree");pair.mode=value.optString("mode");
    pair.result=value.optString("result");pair.archiveKey=value.optString("archiveKey");
    pair.legacyArchive=value.optBoolean("legacyArchive");pair.lastCompleted=value.optLong("lastCompleted");
+   pair.autoMinutes=value.optInt("autoMinutes");pair.deletions=value.optBoolean("deletions",true);pair.autoCharging=value.optBoolean("autoCharging");
    pairs.add(pair);
   }
   return pairs;
@@ -74,7 +77,8 @@ final class LanPairs {
   JSONArray items=new JSONArray();
   for(Pair p:pairs)items.put(new JSONObject().put("id",p.id).put("name",p.name)
    .put("code",p.code).put("tree",p.tree).put("mode",p.mode).put("result",p.result)
-   .put("archiveKey",p.archiveKey).put("legacyArchive",p.legacyArchive).put("lastCompleted",p.lastCompleted));
+   .put("archiveKey",p.archiveKey).put("legacyArchive",p.legacyArchive).put("lastCompleted",p.lastCompleted)
+   .put("autoMinutes",p.autoMinutes).put("deletions",p.deletions).put("autoCharging",p.autoCharging));
   settings.edit().putString("folderPairs",items.toString()).apply();
  }
 }

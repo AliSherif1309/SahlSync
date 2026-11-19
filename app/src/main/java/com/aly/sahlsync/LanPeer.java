@@ -77,7 +77,7 @@ final class LanPeer {
   try{
    check(connection);
    try(InputStream input=connection.getInputStream();ByteArrayOutputStream output=new ByteArrayOutputStream()){
-    byte[] bytes=new byte[65536];
+    byte[] bytes=new byte[262144];
     int count;
     while((count=input.read(bytes))!=-1){
      BackupCancellation.check();
@@ -106,7 +106,7 @@ final class LanPeer {
    connection.setFixedLengthStreamingMode(length-offset);
    try(RandomAccessFile input=new RandomAccessFile(source,"r");OutputStream output=connection.getOutputStream()){
     input.seek(offset);
-    byte[] bytes=new byte[65536];
+    byte[] bytes=new byte[262144];
     int count;
     while((count=input.read(bytes))!=-1){BackupCancellation.check();output.write(bytes,0,count);}
    }
@@ -187,7 +187,7 @@ final class LanPeer {
    }else check(connection);
    long remaining=size-(append?offset:0);
    try(InputStream in=connection.getInputStream();OutputStream out=new FileOutputStream(partial,append)){
-    byte[] block=new byte[65536];
+    byte[] block=new byte[262144];
     int count;
     while((count=in.read(block))!=-1){
      BackupCancellation.check();
@@ -202,6 +202,41 @@ final class LanPeer {
 
  private static String pathQuery(String name)throws UnsupportedEncodingException{
   return "?path="+URLEncoder.encode(name,StandardCharsets.UTF_8.name());
+ }
+
+ /** Deletes a PC file only if it still has the expected contents. The PC keeps it in a recovery folder. */
+ void delete(String name,String expected)throws Exception{
+  HttpsURLConnection connection=connect("/v1/file"+pathQuery(name),"DELETE");
+  try{connection.setRequestProperty("If-Match",expected);check(connection);}finally{connection.disconnect();}
+ }
+
+ /**
+  * Finds the paired PC on the current Wi-Fi when its address changed. The reply is only trusted for the
+  * address: every connection is still checked against the pinned certificate fingerprint.
+  */
+ static String discover(String code){
+  String[] fields=code.trim().split("\\s+");
+  if(fields.length!=4)return null;
+  String port=fields[1].substring(fields[1].indexOf(':')+1);
+  try(DatagramSocket socket=new DatagramSocket()){
+   socket.setBroadcast(true);
+   socket.setSoTimeout(1500);
+   byte[] ask=("SAHL-FIND "+fields[2]).getBytes(StandardCharsets.US_ASCII);
+   for(int attempt=0;attempt<3;attempt++){
+    socket.send(new DatagramPacket(ask,ask.length,InetAddress.getByName("255.255.255.255"),Integer.parseInt(port)));
+    try{
+     byte[] buffer=new byte[64];
+     DatagramPacket reply=new DatagramPacket(buffer,buffer.length);
+     socket.receive(reply);
+     String text=new String(reply.getData(),0,reply.getLength(),StandardCharsets.US_ASCII).trim();
+     if(!text.matches("SAHL-HERE [0-9]{1,5}"))continue;
+     String found="SAHL1 "+reply.getAddress().getHostAddress()+":"+text.substring(10)+" "+fields[2]+" "+fields[3];
+     new LanPeer(found);
+     return found;
+    }catch(SocketTimeoutException ignored){/* Ask again. */}
+   }
+  }catch(Exception ignored){/* Not found on this network. */}
+  return null;
  }
 
  static final class Changed extends IOException {}

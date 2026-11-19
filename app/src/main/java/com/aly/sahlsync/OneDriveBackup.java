@@ -69,7 +69,9 @@ final class OneDriveBackup implements VersionedBackup.Backend {
  private void prune(){
   try{
    JSONArray all=versions(graph,pair,path);
-   for(int i=KEEP_VERSIONS;i<all.length();i++)graph.delete(all.getJSONObject(i).getString("id"),null);
+   int keep=pair.optInt("keepVersions",KEEP_VERSIONS);
+   if(keep<=0)return;
+   for(int i=keep;i<all.length();i++)graph.delete(all.getJSONObject(i).getString("id"),null);
   }catch(Exception ignored){/* Cleanup is best-effort and never blocks a sync. */}
  }
  private static long snapshotTime(JSONObject item){String name=item.optString("name");return Long.parseLong(name.substring(0,name.indexOf('-')));}
