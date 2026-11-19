@@ -23,7 +23,7 @@ final class FolderSync {
  private final String pairId;
  private final SyncDirection direction;
  private final BiConsumer<FolderSync,String> progress;
- int uploaded,downloaded,unchanged,excluded,conflicts,filesChecked;
+ int uploaded,downloaded,deleted,unchanged,excluded,conflicts,filesChecked;
  private int visited;
 
  FolderSync(Context context,Graph graph,JSONObject pair,BiConsumer<FolderSync,String> progress){
@@ -143,6 +143,21 @@ final class FolderSync {
 
  private void syncFile(Uri parent,String drive,String name,String path,Local phone,JSONObject cloud)throws Exception{
   if(cloud==null&&direction==SyncDirection.DOWNLOAD)return;
+  JSONObject receipt=Store.receipt(context,pairId,path);
+  boolean cloudUnchanged=cloud!=null&&receipt!=null&&!cloud.optString("eTag").isEmpty()
+   &&cloud.optString("id").equals(receipt.optString("id"))&&cloud.optString("eTag").equals(receipt.optString("tag"))
+   &&cloud.optLong("size",-1)==receipt.optLong("size",-2);
+  boolean phoneUnchanged=phone!=null&&receipt!=null&&phone.modified>0
+   &&phone.modified==receipt.optLong("phoneModified",-1)&&phone.size==receipt.optLong("size",-2);
+  switch(direction.deletion(phone!=null,cloud!=null,receipt!=null,phoneUnchanged,cloudUnchanged)){
+   case DELETE_CLOUD: deleteCloud(drive,name,path,cloud,receipt);return;
+   case DELETE_PHONE: deletePhone(path,phone);return;
+   default: break;
+  }
+  if(receipt!=null&&(phone==null)!=(cloud==null)&&direction==SyncDirection.NEWEST)
+   Store.history(context,pairId,path+": restored because it changed after being deleted on the other side.");
+  // Fast path: neither side changed since the last sync, so skip reading and hashing the file.
+  if(phoneUnchanged&&cloudUnchanged){unchanged++;return;}
   if(phone!=null)BackupRules.requireFileSize(phone.size);
   if(cloud!=null)BackupRules.requireFileSize(cloud.optLong("size",-1));
   File local=null;
@@ -158,13 +173,12 @@ final class FolderSync {
    OneDriveBackup backend=new OneDriveBackup(context,graph,pair,drive,path,name);
    if(phone!=null&&direction==SyncDirection.NEWEST){
     VersionedBackup.Item resumed=backend.resumeCreate(name,local,localHash);
-    if(resumed!=null){remember(path,name,resumed,localHash);uploaded++;return;}
+    if(resumed!=null){remember(path,name,resumed,localHash,phone.modified);uploaded++;return;}
    }
    VersionedBackup.Item remote=cloud==null?null:new VersionedBackup.Item(
     cloud.getString("id"),cloud.optString("eTag"),cloud.getLong("size"));
    String remoteHash=null;
    if(phone!=null&&remote!=null){
-    JSONObject receipt=Store.receipt(context,pairId,path);
     remoteHash=receipt!=null&&!remote.tag.isEmpty()&&remote.id.equals(receipt.optString("id"))
      &&remote.tag.equals(receipt.optString("tag"))&&remote.size==receipt.optLong("size",-1)
      ?receipt.getString("hash"):backend.hash(remote);
@@ -175,7 +189,7 @@ final class FolderSync {
    switch(action){
     case SKIP: return;
     case CONFLICT: conflict(path,"Different copies. Check their modification times before replacing either.");return;
-    case UNCHANGED: remember(path,name,remote,localHash);unchanged++;return;
+    case UNCHANGED: remember(path,name,remote,localHash,phone.modified);unchanged++;return;
     case UPLOAD:
      BackupCancellation.check();
      if(!localHash.equals(hash(phone.uri)))throw new LocalConflict("Phone file changed during sync.");
@@ -189,7 +203,7 @@ final class FolderSync {
       saved=backend.update(remote,local);
       if(!remote.id.equals(saved.id))throw new IOException("OneDrive file identity changed");
      }
-     remember(path,name,saved,localHash);
+     remember(path,name,saved,localHash,phone.modified);
      uploaded++;
      return;
     case DOWNLOAD:
@@ -204,8 +218,29 @@ final class FolderSync {
   catch(java.time.DateTimeException e){return 0;}
  }
 
- private void remember(String path,String name,VersionedBackup.Item item,String hash)throws Exception{
-  Store.receipt(context,pairId,path,name,new VersionedBackup.Receipt(item.id,item.tag,hash,item.size));
+ private void remember(String path,String name,VersionedBackup.Item item,String hash,long phoneModified)throws Exception{
+  Store.receipt(context,pairId,path,name,new VersionedBackup.Receipt(item.id,item.tag,hash,item.size),phoneModified);
+ }
+
+ /** Deleted on the phone: keep a verified copy in OneDrive history, then remove the cloud file. */
+ private void deleteCloud(String drive,String name,String path,JSONObject cloud,JSONObject receipt)throws Exception{
+  BackupCancellation.check();
+  VersionedBackup.Item remote=new VersionedBackup.Item(cloud.getString("id"),cloud.getString("eTag"),cloud.getLong("size"));
+  new OneDriveBackup(context,graph,pair,drive,path,name).archive(remote,receipt.getString("hash"));
+  graph.delete(remote.id,remote.tag);
+  Store.forget(context,pairId,path);
+  Store.history(context,pairId,path+": deleted from OneDrive (a copy is in Version history).");
+  deleted++;
+ }
+
+ /** Deleted on OneDrive: rename the phone file to a recovery name instead of erasing it. */
+ private void deletePhone(String path,Local phone)throws Exception{
+  BackupCancellation.check();
+  String kept=HISTORY_PREFIX+UUID.randomUUID()+"-"+phone.name.substring(0,Math.min(80,phone.name.length()));
+  if(DocumentsContract.renameDocument(resolver,phone.uri,kept)==null)throw new LocalConflict("Phone storage could not move the deleted file aside.");
+  Store.forget(context,pairId,path);
+  Store.history(context,pairId,path+": deleted on OneDrive; phone copy kept as "+kept+".");
+  deleted++;
  }
 
  private static void requireTag(VersionedBackup.Item item)throws LocalConflict{
@@ -265,7 +300,8 @@ final class FolderSync {
     throw error;
    }
    if(previous!=null)Store.history(context,pairId,path+": previous phone copy saved as "+previous+".");
-   remember(path,name,remote,hash);
+   Local stored=localChildren(parent).get(key(name));
+   remember(path,name,remote,hash,stored==null?0:stored.modified);
   }finally{
    if(!published&&temporary!=null){
     try{DocumentsContract.deleteDocument(resolver,temporary);}catch(Exception ignored){}

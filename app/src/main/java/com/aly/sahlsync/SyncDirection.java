@@ -9,6 +9,16 @@ enum SyncDirection {
   return UPLOAD;
  }
 
+  /** Two-way only: decides whether a copy missing on one side was deleted there since the last sync. */
+ enum Deletion { NONE, DELETE_CLOUD, DELETE_PHONE }
+ Deletion deletion(boolean phone,boolean cloud,boolean synced,boolean phoneUnchanged,boolean cloudUnchanged){
+  if(this!=NEWEST||!synced||phone==cloud)return Deletion.NONE;
+  // An edit always wins over a delete: changed copies are restored instead of removed.
+  if(!phone&&cloudUnchanged)return Deletion.DELETE_CLOUD;
+  if(!cloud&&phoneUnchanged)return Deletion.DELETE_PHONE;
+  return Deletion.NONE;
+ }
+
  enum Action { UPLOAD, DOWNLOAD, UNCHANGED, SKIP, CONFLICT }
 
  Action choose(boolean phone,boolean cloud,boolean same,long phoneModified,long cloudModified){
