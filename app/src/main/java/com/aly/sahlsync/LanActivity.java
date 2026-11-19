@@ -82,7 +82,10 @@ public final class LanActivity extends Activity {
   syncAll=SahlTheme.secondary(this,"Sync all folders",()->startSync(true));
   content.addView(syncAll);
   history=SahlTheme.secondary(this,"Version history",this::showVersions);
+  removeButton=SahlTheme.secondary(this,"Remove this folder",this::removeSelected);
+  removeButton.setTextColor(android.graphics.Color.parseColor("#E8857A"));
   content.addView(history);
+  content.addView(removeButton);
   lastRun=SahlTheme.label(this,"",15,SahlTheme.MUTED);
   content.addView(lastRun);
   bar=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
@@ -134,7 +137,7 @@ public final class LanActivity extends Activity {
  }
 
  private void setControls(boolean enabled){
-  for(Button button:new Button[]{selectPair,addPair,pair,pick,mode,options,sync,syncAll,history}){
+  for(Button button:new Button[]{selectPair,addPair,pair,pick,mode,options,sync,syncAll,history,removeButton}){
    button.setEnabled(enabled);button.setAlpha(enabled?1f:0.4f);
   }
  }
@@ -166,6 +169,22 @@ public final class LanActivity extends Activity {
    try{pairs.update(target);LanWorker.schedule(getApplicationContext(),target);}catch(Exception e){progress.setText("Could not save options.");}
    refresh();
   }).show();
+ }
+
+ private Button removeButton;
+ private void removeSelected(){
+  LanPairs.Pair target=selected;
+  if(target==null)return;
+  Tr.builder(this).setTitle("Remove this folder?")
+   .setMessage("Sahl Sync stops syncing it with your PC. Your files on the phone and the PC are not deleted.")
+   .setNegativeButton("Cancel",null).setPositiveButton("Remove",(d,w)->{
+    try{
+     target.autoMinutes=0;LanWorker.schedule(getApplicationContext(),target);
+     pairs.remove(target.id);
+     if(pairs.list().isEmpty())pairs.add("Folder pair 1");
+     refresh();
+    }catch(Exception e){progress.setText("Could not remove the folder.");}
+   }).show();
  }
 
  private void choosePair(){
