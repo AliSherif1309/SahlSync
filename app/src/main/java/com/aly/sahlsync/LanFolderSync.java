@@ -20,6 +20,9 @@ final class LanFolderSync {
  private final Map<String,String> names=new HashMap<>();
  private final Consumer<String> progress;
  private int visited,skipped,deleted;
+ /** Live position for the progress bar: files done / files to check. */
+ static volatile int done,todo;
+ private long lastReport;
  private boolean syncDeletions=true;
  private JSONObject lastState=new JSONObject(),hashCache=new JSONObject(),newCache=new JSONObject();
  private final JSONObject newState=new JSONObject();
@@ -50,6 +53,7 @@ final class LanFolderSync {
   DocumentFile folder=DocumentFile.fromTreeUri(context,uri);
   if(folder==null||!folder.isDirectory()||!FolderSync.writable(context.getContentResolver(),uri))
    throw new IOException("Choose a writable phone folder again.");
+  done=0;todo=0;LanPeer.track("",0,0);
   progress.accept("Checking phone files…");
   scan(folder,"",0);
   progress.accept("Checking PC files…");
@@ -67,8 +71,10 @@ final class LanFolderSync {
   if(paths.size()>MAX_ITEMS)throw new IOException("Combined folders have more than 20,000 files.");
   int sent=0,received=0,checked=0,unchanged=0,conflicts=0;
   List<String> examples=new ArrayList<>();
+  todo=paths.size();
   for(String path:paths){
    BackupCancellation.check();
+   done=checked;
    progress.accept(checked+" / "+paths.size()+" files checked · "+(sent+received)+" synced\n"+path);
    LocalFile phone=phoneFiles.get(path);
    JSONObject pc=pcFiles.optJSONObject(path);
@@ -148,6 +154,10 @@ final class LanFolderSync {
     else{
      if(rows.getLong(3)>BackupRules.MAX_FILE_BYTES){skipped++;continue;}
      try{
+      if(System.currentTimeMillis()-lastReport>250){
+       lastReport=System.currentTimeMillis();
+       progress.accept("Checking phone files… "+phoneFiles.size()+"\n"+path);
+      }
       String signature=rows.getLong(3)+":"+rows.getLong(4);
       JSONObject cached=hashCache.optJSONObject(path);
       String digest=cached!=null&&rows.getLong(4)>0&&signature.equals(cached.optString("s"))?cached.optString("h"):hash(item,null);
