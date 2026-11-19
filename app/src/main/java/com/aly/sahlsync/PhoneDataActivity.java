@@ -43,7 +43,7 @@ public final class PhoneDataActivity extends Activity {
   }
   LinearLayout content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);
   int pad=SahlTheme.dp(this,20);content.setPadding(pad,pad,pad,pad);
-  ScrollView scroll=new ScrollView(this);scroll.setBackgroundColor(SahlTheme.BG);scroll.addView(content);
+  ScrollView scroll=new ScrollView(this);scroll.setBackgroundColor(SahlTheme.TOP);scroll.addView(content);
   setContentView(scroll);
 
   content.addView(SahlTheme.label(this,"Messages & apps",26,SahlTheme.TEXT));
