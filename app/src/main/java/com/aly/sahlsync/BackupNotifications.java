@@ -4,11 +4,14 @@ import android.Manifest;
 import android.app.*;
 import android.content.*;
 import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
 import android.os.Build;
+import androidx.work.ForegroundInfo;
 
 final class BackupNotifications {
  private static final String STATUS="backup-status";
  private static final String RESULTS="backup-results";
+ private static final String RUNNING="backup-running";
 
  static boolean permitted(Context context){
   NotificationManager manager=context.getSystemService(NotificationManager.class);
@@ -25,6 +28,17 @@ final class BackupNotifications {
   manager.createNotificationChannel(new NotificationChannel(STATUS,"Pinned backup status",NotificationManager.IMPORTANCE_LOW));
   post(context,null,1,builder(context,STATUS).setContentTitle("Sahl Sync")
    .setContentText("Tap to check your backups").setOngoing(true).setOnlyAlertOnce(true).build());
+ }
+
+ static ForegroundInfo running(Context context,int id,String folderName){
+  NotificationManager manager=context.getSystemService(NotificationManager.class);
+  manager.createNotificationChannel(new NotificationChannel(RUNNING,"Backup in progress",NotificationManager.IMPORTANCE_LOW));
+  Notification notification=builder(context,RUNNING).setContentTitle("Backing up: "+folderName)
+   .setContentText("You can leave Sahl Sync while this backup runs.")
+   .setOngoing(true).setOnlyAlertOnce(true).setShowWhen(false).build();
+  return Build.VERSION.SDK_INT>=29
+   ?new ForegroundInfo(id,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+   :new ForegroundInfo(id,notification);
  }
 
  static void finished(Context context,String folderId,String folderName,boolean scheduled,String result){
