@@ -12,6 +12,7 @@ final class LanPeer {
  private static final String HEX="[0-9a-f]{64}";
  private final String host,address,token;
  private final SSLSocketFactory sockets;
+ private File partial,ticketFile;
  final String identity;
 
  LanPeer(String code)throws GeneralSecurityException {
@@ -88,14 +89,23 @@ final class LanPeer {
   }finally{connection.disconnect();}
  }
 
+ void enableResume(File cache,String key){
+  String prefix="lan-resume-"+java.util.UUID.nameUUIDFromBytes(key.getBytes(StandardCharsets.UTF_8));
+  partial=new File(cache,prefix+".part");
+  ticketFile=new File(cache,prefix+".txt");
+ }
+
  void upload(String name,File source,String hash,String expected)throws Exception{
-  HttpsURLConnection connection=connect(fileRoute(name),"PUT");
+  long length=source.length();
+  long offset=partial==null?0:uploadOffset(name,hash,expected,length);
+  HttpsURLConnection connection=connect("/v1/file"+pathQuery(name),"PUT");
   try{
-   connection.setRequestProperty("If-Match",expected);
-   connection.setRequestProperty("X-Sahl-SHA256",hash);
+   uploadHeaders(connection,hash,expected,length);
+   if(partial!=null)connection.setRequestProperty("X-Sahl-Offset",Long.toString(offset));
    connection.setDoOutput(true);
-   connection.setFixedLengthStreamingMode(source.length());
-   try(InputStream input=new FileInputStream(source);OutputStream output=connection.getOutputStream()){
+   connection.setFixedLengthStreamingMode(length-offset);
+   try(RandomAccessFile input=new RandomAccessFile(source,"r");OutputStream output=connection.getOutputStream()){
+    input.seek(offset);
     byte[] bytes=new byte[65536];
     int count;
     while((count=input.read(bytes))!=-1){BackupCancellation.check();output.write(bytes,0,count);}
@@ -104,20 +114,94 @@ final class LanPeer {
   }finally{connection.disconnect();}
  }
 
- void download(String name,File destination,String expected,long size)throws Exception{
-  HttpsURLConnection connection=connect(fileRoute(name),"GET");
+ private long uploadOffset(String name,String hash,String expected,long length)throws Exception{
+  HttpsURLConnection connection=connect("/v1/upload-offset"+pathQuery(name),"GET");
   try{
-   connection.setRequestProperty("If-Match",expected);
+   uploadHeaders(connection,hash,expected,length);
    check(connection);
-   try(InputStream input=connection.getInputStream();OutputStream output=new FileOutputStream(destination)){
-    if(!expected.equals(BackupRules.hash(input,output))||destination.length()!=size)
-     throw new Changed();
+   try(InputStream input=connection.getInputStream()){
+    byte[] body=new byte[128];
+    int size=0,count;
+    while(size<body.length&&(count=input.read(body,size,body.length-size))!=-1)size+=count;
+    if(size==body.length)throw new IOException("Invalid upload checkpoint.");
+    long offset=new JSONObject(new String(body,0,size,StandardCharsets.UTF_8)).getLong("offset");
+    if(offset<0||offset>length)throw new IOException("Invalid upload checkpoint.");
+    return offset;
    }
   }finally{connection.disconnect();}
  }
 
- private static String fileRoute(String name)throws UnsupportedEncodingException{
-  return "/v1/file?path="+URLEncoder.encode(name,StandardCharsets.UTF_8.name());
+ private void uploadHeaders(HttpsURLConnection connection,String hash,String expected,long length){
+  connection.setRequestProperty("If-Match",expected);
+  connection.setRequestProperty("X-Sahl-SHA256",hash);
+  if(partial!=null)connection.setRequestProperty("X-Sahl-Total",Long.toString(length));
+ }
+
+ void download(String name,File destination,String expected,long size)throws Exception{
+  BackupRules.requireFileSize(size);
+  if(partial==null){
+   HttpsURLConnection connection=connect("/v1/file"+pathQuery(name),"GET");
+   try{
+    connection.setRequestProperty("If-Match",expected);
+    check(connection);
+    try(InputStream input=connection.getInputStream();OutputStream output=new FileOutputStream(destination)){
+     if(!expected.equals(BackupRules.hash(input,output))||destination.length()!=size)throw new Changed();
+    }
+   }finally{connection.disconnect();}
+   return;
+  }
+  String ticket=name+"\n"+expected+"\n"+size;
+  boolean matches=ticketFile.isFile()&&new String(java.nio.file.Files.readAllBytes(ticketFile.toPath()),StandardCharsets.UTF_8).equals(ticket);
+  if(!matches||partial.length()>size){
+   java.nio.file.Files.deleteIfExists(partial.toPath());
+   java.nio.file.Files.write(ticketFile.toPath(),ticket.getBytes(StandardCharsets.UTF_8));
+  }
+  long offset=partial.length();
+  try{
+   if(offset<size||!partial.isFile())receive(name,expected,size,offset);
+   try(InputStream input=new FileInputStream(partial);OutputStream output=new FileOutputStream(destination)){
+    if(!expected.equals(BackupRules.hash(input,output))||destination.length()!=size)throw new Changed();
+   }
+  }catch(Changed error){
+   clearDownload();
+   throw error;
+  }
+  clearDownload();
+ }
+
+ private void clearDownload()throws IOException{
+  java.nio.file.Files.deleteIfExists(partial.toPath());
+  java.nio.file.Files.deleteIfExists(ticketFile.toPath());
+ }
+
+ private void receive(String name,String expected,long size,long offset)throws Exception{
+  HttpsURLConnection connection=connect("/v1/file"+pathQuery(name),"GET");
+  try{
+   connection.setRequestProperty("If-Match",expected);
+   if(offset>0)connection.setRequestProperty("Range","bytes="+offset+"-");
+   int status=connection.getResponseCode();
+   boolean append=offset>0&&status==206;
+   if(append){
+    String range="bytes "+offset+"-"+(size-1)+"/"+size;
+    if(!range.equals(connection.getHeaderField("Content-Range")))throw new Changed();
+   }else check(connection);
+   long remaining=size-(append?offset:0);
+   try(InputStream in=connection.getInputStream();OutputStream out=new FileOutputStream(partial,append)){
+    byte[] block=new byte[65536];
+    int count;
+    while((count=in.read(block))!=-1){
+     BackupCancellation.check();
+     if(count>remaining)throw new Changed();
+     out.write(block,0,count);
+     remaining-=count;
+    }
+   }
+   if(remaining!=0)throw new IOException("Download interrupted. Retry to continue.");
+  }finally{connection.disconnect();}
+ }
+
+ private static String pathQuery(String name)throws UnsupportedEncodingException{
+  return "?path="+URLEncoder.encode(name,StandardCharsets.UTF_8.name());
  }
 
  static final class Changed extends IOException {}

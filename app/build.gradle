@@ -6,8 +6,8 @@ android {
   applicationId 'com.aly.sahlsync'
   minSdk 26
   targetSdk 36
-  versionCode 25
-  versionName '0.7.0-alpha.2'
+  versionCode 26
+  versionName '0.7.0-alpha.3'
   def clientId = providers.gradleProperty('msalClientId').getOrElse('00000000-0000-0000-0000-000000000000')
   def signature = providers.gradleProperty('msalSignature').getOrElse('UNCONFIGURED')
   buildConfigField 'String', 'MSAL_CLIENT_ID', '"' + clientId + '"'
