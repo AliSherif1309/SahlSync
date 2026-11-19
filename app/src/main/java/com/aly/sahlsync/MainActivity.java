@@ -221,6 +221,7 @@ public final class MainActivity extends Activity {
   Button updates=SahlTheme.button(this,"Check for updates",()->{});
   updates.setOnClickListener(view->checkForUpdates(updates));
   connect.addView(updates);
+  content.addView(SahlTheme.button(this,"Local Wi-Fi sync (preview)",()->startActivity(new Intent(this,LanActivity.class))));
   LinearLayout pairs=card("Folder backups");
   pairs.addView(SahlTheme.label(this,"Choose upload only, download only, or two-way sync. Two-way sync uses the newest modified copy and keeps the earlier copy. File deletions are never synced. Limit: "+BackupRules.MAX_FILE_MIB+" MiB per file.",15,SahlTheme.MUTED));
   pairs.addView(SahlTheme.button(this,"Add folder backup",()->{

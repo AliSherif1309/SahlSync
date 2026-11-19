@@ -8,6 +8,7 @@
  <application android:label="Sahl Sync" android:icon="@drawable/sahl_sync_launcher" android:roundIcon="@drawable/sahl_sync_launcher" android:theme="@style/SahlTheme" android:allowBackup="false" android:fullBackupContent="false" android:usesCleartextTraffic="false" android:supportsRtl="true">
   <service android:name="androidx.work.impl.foreground.SystemForegroundService"
    android:foregroundServiceType="dataSync" tools:node="merge" />
+  <activity android:name=".LanActivity" android:exported="false" />
   <activity android:name=".MainActivity" android:exported="true">
    <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
   </activity>
