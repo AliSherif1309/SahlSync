@@ -1,3 +1,6 @@
+## 1.1.2
+- Wi-Fi Sync now runs as a background job: leave the app and it keeps going, with progress and a Stop button in the notification.
+
 ## 1.1.1
 - Remove a folder from Sahl Sync (OneDrive and PC folders) without deleting any files.
 - Wi-Fi sync shows live progress: a progress bar for files, MB counter for big files, the file being checked, and a Stop button.
