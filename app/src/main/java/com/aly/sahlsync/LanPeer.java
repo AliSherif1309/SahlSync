@@ -108,7 +108,8 @@ final class LanPeer {
     input.seek(offset);
     byte[] bytes=new byte[262144];
     int count;
-    while((count=input.read(bytes))!=-1){BackupCancellation.check();output.write(bytes,0,count);}
+    long sent=offset;track(name,sent,length);
+    while((count=input.read(bytes))!=-1){BackupCancellation.check();output.write(bytes,0,count);sent+=count;moved=sent;}
    }
    check(connection);
   }finally{connection.disconnect();}
@@ -186,6 +187,7 @@ final class LanPeer {
     if(!range.equals(connection.getHeaderField("Content-Range")))throw new Changed();
    }else check(connection);
    long remaining=size-(append?offset:0);
+   track(name,size-remaining,size);
    try(InputStream in=connection.getInputStream();OutputStream out=new FileOutputStream(partial,append)){
     byte[] block=new byte[262144];
     int count;
@@ -193,7 +195,7 @@ final class LanPeer {
      BackupCancellation.check();
      if(count>remaining)throw new Changed();
      out.write(block,0,count);
-     remaining-=count;
+     remaining-=count;moved=size-remaining;
     }
    }
    if(remaining!=0)throw new IOException("Download interrupted. Retry to continue.");
@@ -238,6 +240,11 @@ final class LanPeer {
   }catch(Exception ignored){/* Not found on this network. */}
   return null;
  }
+
+ /** Live transfer position for the progress bar (read by the screen while a file moves). */
+ static volatile long moved,total;
+ static volatile String current="";
+ static void track(String name,long done,long size){current=name;moved=done;total=size;}
 
  static final class Changed extends IOException {}
 

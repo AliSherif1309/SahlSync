@@ -19,6 +19,25 @@ public final class LanActivity extends Activity {
  private static final int CHOOSE_FOLDER=70, EXPORT_VERSION=71;
  private static final ExecutorService executor=Executors.newSingleThreadExecutor();
  private static boolean running;
+ private static volatile boolean stopRequested;
+ private ProgressBar bar,fileBar;
+ private Button stop;
+ private final android.os.Handler ticker=new android.os.Handler(android.os.Looper.getMainLooper());
+ private final Runnable tick=new Runnable(){
+  @Override public void run(){
+   if(!running||isDestroyed()){bar.setVisibility(android.view.View.GONE);fileBar.setVisibility(android.view.View.GONE);stop.setVisibility(android.view.View.GONE);return;}
+   bar.setVisibility(android.view.View.VISIBLE);stop.setVisibility(android.view.View.VISIBLE);
+   int todo=LanFolderSync.todo,done=LanFolderSync.done;
+   if(todo>0){bar.setIndeterminate(false);bar.setMax(todo);bar.setProgress(done);}else bar.setIndeterminate(true);
+   long total=LanPeer.total,moved=LanPeer.moved;
+   if(total>1024*1024&&moved<total){
+    fileBar.setVisibility(android.view.View.VISIBLE);fileBar.setMax(1000);fileBar.setProgress((int)(moved*1000/total));
+    bytes.setText(LanPeer.current+"  "+(moved>>20)+" / "+(total>>20)+" MB");bytes.setVisibility(android.view.View.VISIBLE);
+   }else{fileBar.setVisibility(android.view.View.GONE);bytes.setVisibility(android.view.View.GONE);}
+   ticker.postDelayed(this,300);
+  }
+ };
+ private TextView bytes;
  private LanPairs pairs;
  private LanPairs.Pair selected;
  private TextView connection,folder,progress,lastRun;
@@ -66,8 +85,21 @@ public final class LanActivity extends Activity {
   content.addView(history);
   lastRun=SahlTheme.label(this,"",15,SahlTheme.MUTED);
   content.addView(lastRun);
+  bar=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
+  bar.setProgressTintList(android.content.res.ColorStateList.valueOf(SahlTheme.GOLD));
+  bar.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(SahlTheme.GOLD));
+  bar.setVisibility(android.view.View.GONE);
+  content.addView(bar);
+  fileBar=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
+  fileBar.setProgressTintList(android.content.res.ColorStateList.valueOf(SahlTheme.MUTED));
+  fileBar.setVisibility(android.view.View.GONE);
+  content.addView(fileBar);
+  bytes=SahlTheme.label(this,"",13,SahlTheme.MUTED);bytes.setVisibility(android.view.View.GONE);content.addView(bytes);
   progress=SahlTheme.label(this,"",16,SahlTheme.TEXT);
   content.addView(progress);
+  stop=SahlTheme.secondary(this,"Stop",()->{stopRequested=true;progress.setText(Tr.t(this,"Stopping after the current step…"));});
+  stop.setVisibility(android.view.View.GONE);
+  content.addView(stop);
   refresh();
  }
 
@@ -82,7 +114,8 @@ public final class LanActivity extends Activity {
    connection.setText(selected.code.isEmpty()?"No PC paired":"PC pairing saved");
    DocumentFile tree=selected.tree.isEmpty()?null:DocumentFile.fromTreeUri(this,Uri.parse(selected.tree));
    folder.setText(tree==null?"No phone folder selected":"Phone folder: "+tree.getName());
-   progress.setText(running?"Sync is running.":selected.result);
+   if(!running)progress.setText(selected.result);
+   else{ticker.removeCallbacks(tick);ticker.post(tick);}
    lastRun.setText(selected.lastCompleted==0?"":"Last completed sync: "+
     java.text.DateFormat.getDateTimeInstance().format(new java.util.Date(selected.lastCompleted)));
    mode.setText("Direction: "+selectedMode().label);
@@ -101,7 +134,9 @@ public final class LanActivity extends Activity {
  }
 
  private void setControls(boolean enabled){
-  for(Button button:new Button[]{selectPair,addPair,pair,pick,mode,options,sync,syncAll,history})button.setEnabled(enabled);
+  for(Button button:new Button[]{selectPair,addPair,pair,pick,mode,options,sync,syncAll,history}){
+   button.setEnabled(enabled);button.setAlpha(enabled?1f:0.4f);
+  }
  }
 
  private Button options;
@@ -354,14 +389,19 @@ public final class LanActivity extends Activity {
    }else if(selected.ready())queue.add(selected);
   }catch(Exception error){progress.setText("Could not load Wi-Fi folder pairs.");return;}
   if(queue.isEmpty())return;
-  running=true;
+  running=true;stopRequested=false;
+  progress.setText(Tr.t(this,"Starting…"));
   refresh();
   getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
   executor.execute(()->{
    for(LanPairs.Pair item:queue){
+    if(stopRequested)break;
     synchronized(LanWorker.class){
+     BackupCancellation.bind(()->stopRequested);
      LanRunner.run(getApplicationContext(),pairs,item,
-      label->runOnUiThread(()->{if(!isDestroyed())progress.setText(item.name+"\n"+label);}));
+      label->runOnUiThread(()->{if(!isDestroyed())progress.setText(item.name+"\n"+Tr.t(this,label));}));
+     BackupCancellation.clear();
+     if(stopRequested){item.result=Tr.t(this,"Stopped. The next sync continues where it left off.");try{pairs.update(item);}catch(Exception ignored){}}
     }
    }
    runOnUiThread(()->{
