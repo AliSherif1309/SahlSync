@@ -10,7 +10,7 @@ import androidx.documentfile.provider.DocumentFile;
 import java.io.*;
 import java.time.Instant;
 import java.util.*;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 import org.json.*;
 
 final class FolderSync {
@@ -22,11 +22,11 @@ final class FolderSync {
  private final JSONObject pair;
  private final String pairId;
  private final SyncDirection direction;
- private final Consumer<String> progress;
- int uploaded,downloaded,unchanged,excluded,conflicts;
+ private final BiConsumer<FolderSync,String> progress;
+ int uploaded,downloaded,unchanged,excluded,conflicts,filesChecked;
  private int visited;
 
- FolderSync(Context context,Graph graph,JSONObject pair,Consumer<String> progress){
+ FolderSync(Context context,Graph graph,JSONObject pair,BiConsumer<FolderSync,String> progress){
   this.context=context;
   resolver=context.getContentResolver();
   this.graph=graph;
@@ -108,12 +108,14 @@ final class FolderSync {
    String name=phone==null?remote.getString("name"):phone.name;
    String relative=path+name;
    if(reserved(name)||BackupRules.excluded(relative,pair.optString("exclude"))){excluded++;continue;}
-   progress.accept(relative);
+   boolean phoneFolder=phone!=null&&phone.directory();
+   boolean cloudFolder=remote!=null&&remote.has("folder");
+   if((phone!=null&&!phoneFolder&&(remote!=null||direction!=SyncDirection.DOWNLOAD))
+    ||(remote!=null&&!cloudFolder&&remote.has("file")))filesChecked++;
+   progress.accept(this,relative);
    try{BackupRules.validateName(name);}
    catch(IllegalArgumentException error){conflict(relative,"Unsupported file name.");continue;}
    if(remote!=null&&!name.equals(remote.getString("name"))){conflict(relative,"Names differ by case.");continue;}
-   boolean phoneFolder=phone!=null&&phone.directory();
-   boolean cloudFolder=remote!=null&&remote.has("folder");
    if((phoneFolder||cloudFolder)&&phone!=null&&remote!=null&&phoneFolder!=cloudFolder){
     conflict(relative,"A file and folder share the same name.");
     continue;
