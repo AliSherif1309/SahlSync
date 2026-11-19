@@ -24,9 +24,13 @@ final class Store {
  static synchronized JSONObject receipt(Context c,String pair,String path)throws Exception{
   String value=c.getSharedPreferences("file-receipts",0).getString(receiptKey(pair,path),null);return value==null?null:new JSONObject(value);
  }
- static synchronized void receipt(Context c,String pair,String path,String name,VersionedBackup.Receipt receipt)throws Exception{
-  JSONObject value=new JSONObject().put("pair",pair).put("path",path).put("name",name).put("id",receipt.id).put("tag",receipt.tag).put("hash",receipt.hash).put("size",receipt.size);
+ static synchronized void receipt(Context c,String pair,String path,String name,VersionedBackup.Receipt receipt)throws Exception{receipt(c,pair,path,name,receipt,0);}
+ static synchronized void receipt(Context c,String pair,String path,String name,VersionedBackup.Receipt receipt,long phoneModified)throws Exception{
+  JSONObject value=new JSONObject().put("phoneModified",phoneModified).put("pair",pair).put("path",path).put("name",name).put("id",receipt.id).put("tag",receipt.tag).put("hash",receipt.hash).put("size",receipt.size);
   if(!c.getSharedPreferences("file-receipts",0).edit().putString(receiptKey(pair,path),value.toString()).commit())throw new java.io.IOException("Could not save backup receipt");
+ }
+ static synchronized void forget(Context c,String pair,String path)throws Exception{
+  if(!c.getSharedPreferences("file-receipts",0).edit().remove(receiptKey(pair,path)).commit())throw new java.io.IOException("Could not update sync records");
  }
  static synchronized JSONArray files(Context c,String pair)throws Exception{
   JSONArray files=new JSONArray();for(Object raw:c.getSharedPreferences("file-receipts",0).getAll().values()){

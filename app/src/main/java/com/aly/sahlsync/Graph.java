@@ -67,6 +67,7 @@ final class Graph {
    }
   }finally{c.disconnect();}
  }
+ void delete(String itemId,String eTag)throws Exception{request("DELETE",ROOT+"/me/drive/items/"+Uri.encode(itemId),null,null,eTag);}
  String contentHash(String itemId)throws Exception{
   String address=ROOT+"/me/drive/items/"+Uri.encode(itemId)+"/content";
   return authorization.send(token->RemoteContent.sha256(address,token));

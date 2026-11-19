@@ -13,7 +13,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 public final class BackupWorker extends Worker {
- private int uploaded,downloaded,unchanged,excluded,conflicts,visited,filesChecked;
+ private int uploaded,downloaded,deleted,unchanged,excluded,conflicts,visited,filesChecked;
  private String current="Connecting";
  private String folderName="Sahl Sync";
  private void progress(){progress(0,0,false);}
@@ -71,7 +71,7 @@ public final class BackupWorker extends Worker {
      reportFolderProgress(sync,current);
     }
     String counts=filesChecked+" files checked, "+(uploaded+downloaded)+" synced ("+uploaded+" uploaded, "
-     +downloaded+" downloaded), "+unchanged+" unchanged";
+     +downloaded+" downloaded), "+(deleted>0?deleted+" deleted, ":"")+unchanged+" unchanged";
     BackupCancellation.check();
     Store.history(c,getInputData().getString("pair"),(getInputData().getString("scheduleGeneration")!=null?"Scheduled backup finished: ":"Backup finished: ")+counts+", "+excluded+" excluded, "+conflicts+" conflicts.");
     notifyResult(counts+", "+conflicts+" conflicts.");
@@ -117,6 +117,7 @@ public final class BackupWorker extends Worker {
   filesChecked=sync.filesChecked;
   uploaded=sync.uploaded;
   downloaded=sync.downloaded;
+  deleted=sync.deleted;
   unchanged=sync.unchanged;
   excluded=sync.excluded;
   conflicts=sync.conflicts;
