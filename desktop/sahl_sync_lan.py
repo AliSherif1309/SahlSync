@@ -223,7 +223,14 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 if expected == "missing":
                     # Publish without replacing a file created during the upload.
-                    os.link(stage, path)
+                    try:
+                        if os.name == "nt":
+                            os.rename(stage, path)
+                        else:
+                            os.link(stage, path)
+                    except FileExistsError:
+                        self.send_error(412)
+                        return
                 else:
                     os.replace(stage, path)
                 self.body(200, b"{}", "application/json")
