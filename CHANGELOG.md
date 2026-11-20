@@ -1,3 +1,6 @@
+## 1.2.1
+- PC app: no more error at Windows start-up. It waits for Wi-Fi, retries quietly, follows address changes, and shares on all home-network connections (still only answering private-network devices).
+
 ## 1.2.0
 - New: Messages & apps backup (replaces SMS Import/Export and App List Backup).
   - Back up SMS, MMS with attachments and the call log to one zip; restore without duplicates.
