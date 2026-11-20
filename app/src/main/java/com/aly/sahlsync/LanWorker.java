@@ -17,16 +17,24 @@ public final class LanWorker extends Worker {
    .setRequiresBatteryNotLow(true).setRequiresCharging(pair.autoCharging).build();
   manager.enqueueUniquePeriodicWork(name,ExistingPeriodicWorkPolicy.UPDATE,
    new PeriodicWorkRequest.Builder(LanWorker.class,Math.max(15,pair.autoMinutes),TimeUnit.MINUTES)
-    .setConstraints(constraints).setInputData(new Data.Builder().putString("pair",pair.id).build()).build());
+    .setConstraints(constraints).addTag(AUTO_TAG).setInputData(new Data.Builder().putString("pair",pair.id).build()).build());
  }
 
- static final String MANUAL="lan-manual";
+ static final String MANUAL="lan-manual",AUTO_TAG="lan-auto";
 
  /** "Sync now": runs as a background job, so it keeps going after you leave the app. */
  static void runNow(Context context,java.util.List<String> ids){
   Data data=new Data.Builder().putStringArray("pairs",ids.toArray(new String[0])).putBoolean("manual",true).build();
   WorkManager.getInstance(context).enqueueUniqueWork(MANUAL,ExistingWorkPolicy.KEEP,
-   new OneTimeWorkRequest.Builder(LanWorker.class).setInputData(data).build());
+   new OneTimeWorkRequest.Builder(LanWorker.class).setInputData(data)
+    .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST).build());
+ }
+
+ /** Needed for expedited work on older Android: the notification shown while starting. */
+ @NonNull @Override public ForegroundInfo getForegroundInfo(){
+  Context context=getApplicationContext();
+  return BackupNotifications.lanRunning(context,0x2A11,Tr.t(context,"Syncing with PC: "),Tr.t(context,"Starting…"),0,0,
+   WorkManager.getInstance(context).createCancelPendingIntent(getId()));
  }
 
  private long lastUpdate;
@@ -53,8 +61,8 @@ public final class LanWorker extends Worker {
      if(isStopped())break;
      LanPairs.Pair pair=pairs.get(id);
      if(pair==null||!pair.ready()||(!manual&&pair.autoMinutes<=0))continue;
-     if(manual){lastUpdate=0;show(context,pair.name,"Starting…");}
-     LanRunner.run(context,pairs,pair,label->{if(manual)show(context,pair.name,label);});
+     lastUpdate=0;show(context,pair.name,"Starting…");
+     LanRunner.run(context,pairs,pair,label->show(context,pair.name,label));
      if(isStopped()){pair.result=Tr.t(context,"Stopped. The next sync continues where it left off.");pairs.update(pair);}
     }
     return Result.success();

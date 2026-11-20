@@ -28,8 +28,14 @@ public final class LanActivity extends Activity {
  private final android.os.Handler ticker=new android.os.Handler(android.os.Looper.getMainLooper());
  private final Runnable tick=new Runnable(){
   @Override public void run(){
-   if(!running||isDestroyed()){bar.setVisibility(android.view.View.GONE);fileBar.setVisibility(android.view.View.GONE);stop.setVisibility(android.view.View.GONE);return;}
+   if(isDestroyed())return;
+   boolean active=running||LanRunner.busy;
+   if(active!=shownActive){shownActive=active;setControls(!active);if(!active)refresh();}
+   if(!active){bar.setVisibility(android.view.View.GONE);fileBar.setVisibility(android.view.View.GONE);bytes.setVisibility(android.view.View.GONE);
+    stop.setVisibility(android.view.View.GONE);ticker.postDelayed(this,1000);return;}
    bar.setVisibility(android.view.View.VISIBLE);stop.setVisibility(android.view.View.VISIBLE);
+   String now=LanRunner.live;
+   if(!now.isEmpty())progress.setText(now);
    int todo=LanFolderSync.todo,done=LanFolderSync.done;
    if(todo>0){bar.setIndeterminate(false);bar.setMax(todo);bar.setProgress(done);}else bar.setIndeterminate(true);
    long total=LanPeer.total,moved=LanPeer.moved;
@@ -41,6 +47,7 @@ public final class LanActivity extends Activity {
   }
  };
  private TextView bytes;
+ private boolean shownActive;
  private LanPairs pairs;
  private LanPairs.Pair selected;
  private TextView connection,folder,progress,lastRun;
@@ -105,6 +112,8 @@ public final class LanActivity extends Activity {
   content.addView(progress);
   stop=SahlTheme.secondary(this,"Stop",()->{
    androidx.work.WorkManager.getInstance(getApplicationContext()).cancelUniqueWork(LanWorker.MANUAL);
+   androidx.work.WorkManager.getInstance(getApplicationContext()).cancelAllWorkByTag(LanWorker.AUTO_TAG);
+   for(LanPairs.Pair p:pairs.list())LanWorker.schedule(getApplicationContext(),p);   // keep future auto syncs
    progress.setText(Tr.t(this,"Stopping after the current step…"));});
   (watched=androidx.work.WorkManager.getInstance(getApplicationContext()).getWorkInfosForUniqueWorkLiveData(LanWorker.MANUAL)).observeForever(watcher=infos->{
    boolean active=false;String label=null;
@@ -121,7 +130,8 @@ public final class LanActivity extends Activity {
   refresh();
  }
 
- @Override protected void onResume(){super.onResume();if(progress!=null)refresh();}
+ @Override protected void onResume(){super.onResume();if(progress!=null){refresh();ticker.removeCallbacks(tick);ticker.post(tick);}}
+ @Override protected void onPause(){ticker.removeCallbacks(tick);super.onPause();}
 
  private void refresh(){
   try{
@@ -137,9 +147,9 @@ public final class LanActivity extends Activity {
    lastRun.setText(selected.lastCompleted==0?"":"Last completed sync: "+
     java.text.DateFormat.getDateTimeInstance().format(new java.util.Date(selected.lastCompleted)));
    mode.setText("Direction: "+selectedMode().label);
-   options.setText("Auto sync: "+autoLabel(selected.autoMinutes)+(selected.deletions?" · Deletions sync":" · Deletions off"));
+   options.setText(Tr.t(this,"Auto sync: ")+Tr.t(this,autoLabel(selected.autoMinutes))+" · "+Tr.t(this,selected.deletions?"Deletions sync":"Deletions off"));
    syncAll.setVisibility(all.size()>1?android.view.View.VISIBLE:android.view.View.GONE);
-   setControls(!running);
+   setControls(!(running||LanRunner.busy));
    LanWorker.schedule(getApplicationContext(),selected);
    Tr.tree(this,getWindow().getDecorView());
    history.setEnabled(!running&&selected.ready());
@@ -416,6 +426,7 @@ public final class LanActivity extends Activity {
 
  private void startSync(boolean all){
   if(running)return;
+  if(LanRunner.busy){progress.setText(Tr.t(this,"An automatic sync is already running. Its progress is shown below."));return;}
   List<LanPairs.Pair> queue=new ArrayList<>();
   try{
    if(all){

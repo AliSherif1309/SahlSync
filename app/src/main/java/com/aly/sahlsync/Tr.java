@@ -70,7 +70,7 @@ final class Tr {
    "Off","متوقفة","Phone → PC","الهاتف ← الكمبيوتر","PC → Phone","الكمبيوتر ← الهاتف",
    "Scan the QR shown in Sahl Sync on your PC","امسح رمز QR الظاهر في سهل للمزامنة على الكمبيوتر",
    "Looking for your PC on Wi-Fi…","جارٍ البحث عن الكمبيوتر على الشبكة…","Checking phone files…","جارٍ فحص ملفات الهاتف…","Checking PC files…","جارٍ فحص ملفات الكمبيوتر…",
-   "Language","اللغة","Messages & apps backup","نسخ الرسائل والتطبيقات","Messages & apps","الرسائل والتطبيقات",
+   "Language","اللغة","An automatic sync is already running. Its progress is shown below.","توجد مزامنة تلقائية تعمل الآن. يظهر تقدّمها بالأسفل.","daily","يوميًا","Deletions sync","مزامنة الحذف","Deletions off","الحذف متوقف","every 15 min","كل 15 دقيقة","every 1 h","كل ساعة","every 6 h","كل 6 ساعات","Messages & apps backup","نسخ الرسائل والتطبيقات","Messages & apps","الرسائل والتطبيقات",
    "Back up your SMS, MMS, call log and app list. Choose a folder that Sahl Sync already syncs, so backups reach OneDrive or your PC automatically.","انسخ رسائلك وسجل المكالمات وقائمة تطبيقاتك. اختر مجلدًا يزامنه سهل، لتصل النسخ إلى OneDrive أو الكمبيوتر تلقائيًا.",
    "Backup folder","مجلد النسخ","Choose backup folder","اختيار مجلد النسخ","No folder chosen","لم يتم اختيار مجلد","What to back up","ماذا تنسخ",
    "SMS & MMS (with attachments)","الرسائل SMS و MMS (مع المرفقات)","Call log","سجل المكالمات","App list (to reinstall later)","قائمة التطبيقات (لإعادة تثبيتها لاحقًا)",

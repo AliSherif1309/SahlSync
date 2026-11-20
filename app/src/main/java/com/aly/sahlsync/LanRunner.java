@@ -13,7 +13,13 @@ final class LanRunner {
  }
 
  /** Syncs and records the result on the pair. If the PC moved to a new address, finds it on Wi-Fi first. */
- static void run(Context context,LanPairs pairs,LanPairs.Pair item,Consumer<String> progress){
+ /** What is running right now (manual or automatic), so any open screen can show it. */
+ static volatile boolean busy;
+ static volatile String live="";
+
+ static void run(Context context,LanPairs pairs,LanPairs.Pair item,Consumer<String> report){
+  busy=true;live=item.name+"\n"+Tr.t(context,"Starting…");
+  Consumer<String> progress=label->{live=item.name+"\n"+Tr.t(context,label);report.accept(label);};
   try{
    try{
     sync(context,item,progress);
@@ -33,6 +39,7 @@ final class LanRunner {
    item.result=error.getMessage();
    if(item.result==null||item.result.isEmpty())item.result="Wi-Fi sync could not finish.";
   }
+  busy=false;live="";
   try{pairs.update(item);}catch(Exception ignored){/* The screen shows the in-memory result. */}
  }
 
