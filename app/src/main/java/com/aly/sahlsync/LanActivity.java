@@ -113,7 +113,7 @@ public final class LanActivity extends Activity {
   stop=SahlTheme.secondary(this,"Stop",()->{
    androidx.work.WorkManager.getInstance(getApplicationContext()).cancelUniqueWork(LanWorker.MANUAL);
    androidx.work.WorkManager.getInstance(getApplicationContext()).cancelAllWorkByTag(LanWorker.AUTO_TAG);
-   for(LanPairs.Pair p:pairs.list())LanWorker.schedule(getApplicationContext(),p);   // keep future auto syncs
+   try{for(LanPairs.Pair p:pairs.list())LanWorker.schedule(getApplicationContext(),p);}catch(Exception ignored){}   // keep future auto syncs
    progress.setText(Tr.t(this,"Stopping after the current step…"));});
   (watched=androidx.work.WorkManager.getInstance(getApplicationContext()).getWorkInfosForUniqueWorkLiveData(LanWorker.MANUAL)).observeForever(watcher=infos->{
    boolean active=false;String label=null;
@@ -147,7 +147,8 @@ public final class LanActivity extends Activity {
    lastRun.setText(selected.lastCompleted==0?"":"Last completed sync: "+
     java.text.DateFormat.getDateTimeInstance().format(new java.util.Date(selected.lastCompleted)));
    mode.setText("Direction: "+selectedMode().label);
-   options.setText(Tr.t(this,"Auto sync: ")+Tr.t(this,autoLabel(selected.autoMinutes))+" · "+Tr.t(this,selected.deletions?"Deletions sync":"Deletions off"));
+   options.setText(Tr.t(this,"Auto sync: ")+Tr.t(this,autoLabel(selected.autoMinutes))
+    +(selected.autoMinutes>=1440&&selected.autoTime>=0?String.format(java.util.Locale.US," %02d:%02d",selected.autoTime/60,selected.autoTime%60):"")+" · "+Tr.t(this,selected.deletions?"Deletions sync":"Deletions off"));
    syncAll.setVisibility(all.size()>1?android.view.View.VISIBLE:android.view.View.GONE);
    setControls(!(running||LanRunner.busy));
    LanWorker.schedule(getApplicationContext(),selected);
@@ -182,12 +183,24 @@ public final class LanActivity extends Activity {
   ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,Tr.all(this,labels));auto.setAdapter(adapter);
   for(int i=0;i<AUTO.length;i++)if(AUTO[i]==target.autoMinutes)auto.setSelection(i);
   form.addView(auto);
+  int[] time={target.autoTime>=0?target.autoTime:21*60};
+  Button pickTime=SahlTheme.secondary(this,"",()->{});
+  Runnable label=()->pickTime.setText(Tr.t(this,"Time: ")+String.format(java.util.Locale.US,"%02d:%02d",time[0]/60,time[0]%60));
+  label.run();
+  pickTime.setOnClickListener(v->new android.app.TimePickerDialog(this,(view,h,m)->{time[0]=h*60+m;label.run();},time[0]/60,time[0]%60,
+   android.text.format.DateFormat.is24HourFormat(this)).show());
+  form.addView(pickTime);
+  auto.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
+   @Override public void onItemSelected(AdapterView<?> p,android.view.View v,int position,long id){pickTime.setVisibility(AUTO[position]>=1440?android.view.View.VISIBLE:android.view.View.GONE);}
+   @Override public void onNothingSelected(AdapterView<?> p){}
+  });
   CheckBox charging=new CheckBox(this);charging.setText("Auto sync only while charging");charging.setChecked(target.autoCharging);form.addView(charging);
   CheckBox deletions=new CheckBox(this);deletions.setText("Sync deletions (two-way mode). Deleted files stay in Version history.");
   deletions.setChecked(target.deletions);form.addView(deletions);
   EditText name=new EditText(this);name.setHint("Folder pair name");name.setText(target.name);name.setSingleLine(true);form.addView(name);
   Tr.builder(this).setTitle("Options").setView(form).setNegativeButton("Cancel",null).setPositiveButton("Save",(d,w)->{
    target.autoMinutes=AUTO[auto.getSelectedItemPosition()];
+   target.autoTime=target.autoMinutes>=1440?time[0]:-1;
    target.autoCharging=charging.isChecked();
    target.deletions=deletions.isChecked();
    String title=name.getText().toString().trim();if(!title.isEmpty())target.name=title;

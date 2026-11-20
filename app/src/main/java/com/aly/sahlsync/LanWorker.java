@@ -15,8 +15,24 @@ public final class LanWorker extends Worker {
   if(pair.autoMinutes<=0||!pair.ready()){manager.cancelUniqueWork(name);return;}
   Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.UNMETERED)
    .setRequiresBatteryNotLow(true).setRequiresCharging(pair.autoCharging).build();
-  manager.enqueueUniquePeriodicWork(name,ExistingPeriodicWorkPolicy.UPDATE,
+  boolean timed=pair.autoMinutes>=1440&&pair.autoTime>=0;
+  long delay=0;
+  if(timed){
+   java.util.Calendar next=java.util.Calendar.getInstance();
+   next.set(java.util.Calendar.HOUR_OF_DAY,pair.autoTime/60);next.set(java.util.Calendar.MINUTE,pair.autoTime%60);
+   next.set(java.util.Calendar.SECOND,0);next.set(java.util.Calendar.MILLISECOND,0);
+   if(next.getTimeInMillis()<=System.currentTimeMillis())next.add(java.util.Calendar.DAY_OF_MONTH,1);
+   delay=next.getTimeInMillis()-System.currentTimeMillis();
+  }
+  // A daily time is applied by re-creating the schedule only when the time changed.
+  String key="lan-auto-time-"+pair.id;
+  android.content.SharedPreferences marks=context.getSharedPreferences("lan-sync",Context.MODE_PRIVATE);
+  String mark=pair.autoMinutes+"@"+pair.autoTime+"@"+pair.autoCharging;
+  boolean changed=!mark.equals(marks.getString(key,""));
+  marks.edit().putString(key,mark).apply();
+  manager.enqueueUniquePeriodicWork(name,changed?ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE:ExistingPeriodicWorkPolicy.UPDATE,
    new PeriodicWorkRequest.Builder(LanWorker.class,Math.max(15,pair.autoMinutes),TimeUnit.MINUTES)
+    .setInitialDelay(delay,TimeUnit.MILLISECONDS)
     .setConstraints(constraints).addTag(AUTO_TAG).setInputData(new Data.Builder().putString("pair",pair.id).build()).build());
  }
 
