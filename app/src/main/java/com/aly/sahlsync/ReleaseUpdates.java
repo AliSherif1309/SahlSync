@@ -12,9 +12,9 @@ final class ReleaseUpdates {
  private static final Pattern APK=Pattern.compile("SahlSync-v([0-9]+\\.[0-9]+\\.[0-9]+(?:-[A-Za-z0-9.-]+)?)-([0-9]{1,10})\\.apk");
 
  static final class Release {
-  final String version,page;
+  final String version,page,apkUrl,notes;
   final long code;
-  Release(String version,String page,long code){this.version=version;this.page=page;this.code=code;}
+  Release(String version,String page,long code,String apkUrl,String notes){this.version=version;this.page=page;this.code=code;this.apkUrl=apkUrl;this.notes=notes;}
  }
 
  static Release latest()throws Exception{
@@ -38,6 +38,12 @@ final class ReleaseUpdates {
   }finally{connection.disconnect();}
  }
 
+ /** First non-blank line of the release notes, like Sahl Adhan shows. */
+ private static String firstLine(String body){
+  for(String line:body.split("\n")){String t=line.trim();if(!t.isEmpty()&&!t.startsWith("#"))return t;}
+  return "";
+ }
+
  private static Release select(JSONArray releases)throws JSONException{
   Release best=null;
   for(int index=0;index<releases.length();index++){
@@ -53,7 +59,9 @@ final class ReleaseUpdates {
     if(!tag.equals(release.optString("tag_name")))continue;
     long code=Long.parseLong(match.group(2));
     if(code<=0||code>Integer.MAX_VALUE)continue;
-    if(best==null||code>best.code)best=new Release(version,RELEASES+"/tag/"+tag,code);
+    String url=asset.optString("browser_download_url");
+    if(!url.startsWith("https://github.com/"+REPO+"/releases/download/"))continue;
+    if(best==null||code>best.code)best=new Release(version,RELEASES+"/tag/"+tag,code,url,firstLine(release.optString("body")));
    }
   }
   return best;
