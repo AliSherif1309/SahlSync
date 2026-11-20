@@ -400,6 +400,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class Server(HTTPServer):
+    def verify_request(self, request, client_address):
+        # Listens on every network connection, but only answers devices on a private home network.
+        try:
+            return ipaddress.IPv4Address(client_address[0]).is_private
+        except ValueError:
+            return False
+
     def get_request(self):
         socket, address = super().get_request()
         socket.settimeout(10)
@@ -517,7 +524,8 @@ def main():
     tls, fingerprint, token = identity(state, folder)
     codes = {}
     shares = {}
-    with Server((str(args.listen), args.port), Handler) as server:
+    # Bind to all connections: the PC keeps working when Wi-Fi connects late or its address changes.
+    with Server(("0.0.0.0", args.port), Handler) as server:
         server.tls = tls
         for root in roots:
             secret = token if root == folder else identity(state, root)[2]

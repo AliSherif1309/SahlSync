@@ -14,7 +14,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 APP = "Sahl Sync for PC"
-VERSION = "1.1.0"
+VERSION = "1.2.1"
 STATE = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "SahlSync"
 SETTINGS = STATE / "pc.json"
 PAIRING = STATE / "pairing.json"
@@ -32,8 +32,14 @@ def serve(arguments):
     sys.stdout = sys.stdout or log
     sys.stderr = log
     import sahl_sync_lan
+    import traceback
     sys.argv = ["sahl_sync_lan"] + arguments
-    sahl_sync_lan.main()
+    try:
+        sahl_sync_lan.main()
+    except BaseException:
+        traceback.print_exc(file=log)   # Logged quietly; the window retries instead of showing an error.
+        log.flush()
+        os._exit(1)
 
 
 def private_addresses():
@@ -218,14 +224,25 @@ class App:
         return [sys.executable, str(Path(__file__).with_name("sahl_sync_pc.py")), "serve"] + arguments
 
     def toggle(self):
+        self.retry = None
         if self.worker:
             self.stop()
             return
         folders = list(self.folders.get(0, "end"))
-        address = self.address.get().strip()
-        if not folders or not address:
-            messagebox.showinfo(APP, "Add a folder and choose the PC address first.")
+        if not folders:
+            messagebox.showinfo(APP, "Add a folder first.")
             return
+        current = private_addresses()
+        self.address["values"] = current
+        if not current:
+            # Wi-Fi not connected yet (common right after Windows starts): try again shortly.
+            self.status.configure(text="Waiting for Wi-Fi…", fg=MUTED)
+            self.update_tray("waiting for Wi-Fi")
+            self.retry = self.root.after(10_000, self.toggle)
+            return
+        if self.address.get().strip() not in current:
+            self.address.set(current[0])
+        address = self.address.get().strip()
         self.save()
         try:
             PAIRING.unlink(missing_ok=True)
@@ -241,14 +258,26 @@ class App:
         self.start.configure(text="Stop sharing")
         self.status.configure(text="Starting...", fg=MUTED)
         self.root.after(700, self.wait_for_codes, 0)
+        self.root.after(30_000, self.watch_address)
+
+    def watch_address(self):
+        """If the PC's Wi-Fi address changes, restart sharing so the QR code shows the new address."""
+        if not self.worker:
+            return
+        current = private_addresses()
+        if current and self.address.get().strip() not in current:
+            self.restart()
+            return
+        self.root.after(30_000, self.watch_address)
 
     def wait_for_codes(self, attempt):
         if not self.worker:
             return
         if self.worker.poll() is not None:
             self.stop()
-            self.status.configure(text="Could not start sharing. Check the address and port, then see server.log in "
+            self.status.configure(text="Could not start sharing; trying again in 15 seconds. Details: server.log in "
                                   + str(STATE), fg=GOLD)
+            self.retry = self.root.after(15_000, self.toggle)
             return
         try:
             self.codes = json.loads(PAIRING.read_text(encoding="utf-8"))
@@ -267,6 +296,9 @@ class App:
         self.toggle()
 
     def stop(self):
+        if getattr(self, "retry", None):
+            self.root.after_cancel(self.retry)
+            self.retry = None
         if self.worker:
             self.worker.terminate()
             try:
