@@ -136,7 +136,7 @@ jobs:
           flags=(--latest)
           if [[ "$VERSION" == *-* ]]; then flags=(--prerelease --latest=false); fi
           gh release create "v$VERSION" out/*.apk out/SHA256SUMS \
-            --target "$GITHUB_SHA" --title "Sahl Sync $VERSION" --generate-notes "${flags[@]}"
+            --target "$GITHUB_SHA" --title "Sahl Sync $VERSION" --notes "$(git log -1 --format=%s)" "${flags[@]}"
 
   pc:
     needs: release

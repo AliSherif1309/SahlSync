@@ -41,7 +41,8 @@ public final class MainActivity extends Activity {
   }
   if(Auth.configured())io.execute(()->{try{IMultipleAccountPublicClientApplication app=Auth.open(getApplicationContext());runOnUiThread(()->{auth=app;loadAccount();});}catch(Exception e){runOnUiThread(()->{status.setText("Could not initialize Microsoft sign-in. Reopen the app to retry.");});}});
  }
- @Override protected void onResume(){super.onResume();BackupNotifications.refreshStatus(this);if(auth!=null)loadAccount();}
+ @Override protected void onResume(){super.onResume();BackupNotifications.refreshStatus(this);if(auth!=null)loadAccount();
+  UpdateCheckReceiver.schedule(this);if(!updateCheckedThisRun){updateCheckedThisRun=true;checkForUpdates(null);}}
  private void offerBackgroundSetupForExistingSchedules(){
   if(backgroundAllowed()||Store.prefs(this).getBoolean("backgroundSetupOffered",false))return;
   try{
@@ -135,33 +136,36 @@ public final class MainActivity extends Activity {
   super.onRequestPermissionsResult(requestCode,permissions,results);
   if(requestCode==610)BackupNotifications.refreshStatus(this);
  }
+ private static boolean updateCheckedThisRun=false;
+
+ /** Sahl Adhan way: checks on open, clear result on manual check, "Update now" downloads the APK in the browser. */
  private void checkForUpdates(Button button){
-  button.setEnabled(false);
-  button.setText("Checking for updates...");
+  boolean manual=button!=null;
+  if(manual){button.setEnabled(false);button.setText("Checking...");}
   io.execute(()->{
-   try{
-    ReleaseUpdates.Release newest=ReleaseUpdates.latest();
-    runOnUiThread(()->{
-     if(isFinishing()||isDestroyed())return;
-     button.setEnabled(true);
-     button.setText("Check for updates");
-     if(newest==null){message("No APK releases have been published yet.");return;}
-     if(newest.code<=BuildConfig.VERSION_CODE){message("You are up to date. Installed version: "+BuildConfig.VERSION_NAME);return;}
-     Tr.builder(this).setTitle("Sahl Sync "+newest.version+" is available")
-      .setMessage("Installed version: "+BuildConfig.VERSION_NAME+". Open the GitHub release to download the APK and see what changed.")
-      .setNegativeButton("Later",null)
-      .setPositiveButton("Open release",(dialog,which)->{
-       try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(newest.page)));}
-       catch(ActivityNotFoundException error){message("Open this release in a browser: "+newest.page);}
-      }).show();
-    });
-   }catch(Exception error){runOnUiThread(()->{
+   ReleaseUpdates.Release found=null;boolean failed=false;
+   try{found=ReleaseUpdates.latest();}catch(Exception error){failed=true;}
+   ReleaseUpdates.Release newest=found;boolean error=failed;
+   runOnUiThread(()->{
     if(isFinishing()||isDestroyed())return;
-    button.setEnabled(true);
-    button.setText("Check for updates");
-    message("Could not check GitHub for updates. Check your connection and try again.");
-   });}
+    if(manual){button.setEnabled(true);button.setText("Check for updates");}
+    if(error){if(manual)message("Could not check GitHub for updates. Check your connection and try again.");return;}
+    if(newest==null||newest.code<=BuildConfig.VERSION_CODE){if(manual)message("You have the latest version (v"+BuildConfig.VERSION_NAME+")");return;}
+    offerUpdate(newest);
+   });
   });
+ }
+
+ private void offerUpdate(ReleaseUpdates.Release newest){
+  Tr.builder(this).setTitle("New version available: v"+newest.version)
+   .setMessage(newest.notes.isEmpty()?"A new version of Sahl Sync is ready.":newest.notes)
+   .setNegativeButton("Later",null)
+   .setPositiveButton("Update now",(dialog,which)->{
+    try{
+     startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(newest.apkUrl)));
+     android.widget.Toast.makeText(this,"Downloading in your browser — tap the download when it finishes to install",android.widget.Toast.LENGTH_LONG).show();
+    }catch(ActivityNotFoundException error){message("Open this link in a browser: "+newest.apkUrl);}
+   }).show();
  }
 
  private void loadAccount(){
