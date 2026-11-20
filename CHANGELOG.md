@@ -1,3 +1,9 @@
+## 1.2.3
+- Wi-Fi sync no longer looks stuck on "Starting…": the screen and a notification show any running sync, including automatic ones; Stop stops it.
+- Sync now starts immediately (expedited) instead of waiting for Android.
+- Arabic for the Auto sync options label.
+- Daily Wi-Fi auto sync: choose the time of day.
+
 ## 1.2.2
 - PC app: no more error at Windows start-up. It waits for Wi-Fi, retries quietly, follows address changes, and shares on all home-network connections (still only answering private-network devices).
 
