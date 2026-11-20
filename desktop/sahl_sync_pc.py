@@ -14,7 +14,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 APP = "Sahl Sync for PC"
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 STATE = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "SahlSync"
 SETTINGS = STATE / "pc.json"
 PAIRING = STATE / "pairing.json"

@@ -1,4 +1,4 @@
-## 1.2.1
+## 1.2.2
 - PC app: no more error at Windows start-up. It waits for Wi-Fi, retries quietly, follows address changes, and shares on all home-network connections (still only answering private-network devices).
 
 ## 1.2.0
