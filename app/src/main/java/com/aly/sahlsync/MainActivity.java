@@ -31,6 +31,7 @@ public final class MainActivity extends Activity {
  private java.io.File pendingSnapshot;
  private String pendingSnapshotName;
  @Override public void onCreate(Bundle saved){
+  SahlCore.catchCrashes(this);
   super.onCreate(saved);if(saved!=null){pendingLocal=saved.getString("local");pendingWriteTree=saved.getString("writePair");}
   if(saved!=null){String cached=saved.getString("snapshot");if(cached!=null){java.io.File file=new java.io.File(cached);try{if(file.getCanonicalFile().getParentFile().equals(getCacheDir().getCanonicalFile()))pendingSnapshot=file;}catch(java.io.IOException ignored){}}pendingSnapshotName=saved.getString("snapshotName");}
   Store.prefs(this).registerOnSharedPreferenceChangeListener(historyListener);
