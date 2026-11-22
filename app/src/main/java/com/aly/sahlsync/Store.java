@@ -27,38 +27,113 @@ final class Store {
   JSONArray all=pairs(c);for(int i=0;i<all.length();i++)if(all.getJSONObject(i).getString("id").equals(id))return all.getJSONObject(i);
   throw new java.io.IOException("Folder pair not found");
  }
- static String receiptKey(String pair,String path){return pair+":"+path;}
+ private static final class ReceiptsDb extends android.database.sqlite.SQLiteOpenHelper {
+  ReceiptsDb(Context c){super(c.getApplicationContext(),"sahl_sync.db",null,1);}
+  @Override public void onConfigure(android.database.sqlite.SQLiteDatabase db){db.enableWriteAheadLogging();}
+  @Override public void onCreate(android.database.sqlite.SQLiteDatabase db){
+   db.execSQL("CREATE TABLE IF NOT EXISTS receipts("
+    +"pair TEXT NOT NULL,path TEXT NOT NULL,name TEXT NOT NULL,"
+    +"remote_id TEXT NOT NULL,tag TEXT NOT NULL,hash TEXT NOT NULL,"
+    +"size INTEGER NOT NULL,phone_modified INTEGER NOT NULL,PRIMARY KEY(pair,path))");
+   db.execSQL("CREATE INDEX IF NOT EXISTS idx_receipts_pair ON receipts(pair)");
+  }
+  @Override public void onUpgrade(android.database.sqlite.SQLiteDatabase db,int oldVersion,int newVersion){}
+ }
+ private static ReceiptsDb dbHelper;
+ private static synchronized android.database.sqlite.SQLiteDatabase db(Context c){
+  if(dbHelper==null)dbHelper=new ReceiptsDb(c);
+  android.database.sqlite.SQLiteDatabase database=dbHelper.getWritableDatabase();
+  migrateLegacyReceipts(c,database);
+  return database;
+ }
+ private static void migrateLegacyReceipts(Context c,android.database.sqlite.SQLiteDatabase database){
+  SharedPreferences syncPrefs=prefs(c);
+  if(syncPrefs.getBoolean("receiptsMigrated",false))return;
+  SharedPreferences legacy=c.getSharedPreferences("file-receipts",0);
+  Map<String,?> all=legacy.getAll();
+  if(!all.isEmpty()){
+   database.beginTransaction();
+   try{
+    for(Object raw:all.values()){
+     if(!(raw instanceof String))continue;
+     try{
+      JSONObject v=new JSONObject((String)raw);
+      String pair=v.optString("pair"),path=v.optString("path");
+      if(pair.isEmpty()||path.isEmpty())continue;
+      android.content.ContentValues row=new android.content.ContentValues();
+      row.put("pair",pair);row.put("path",path);row.put("name",v.optString("name"));
+      row.put("remote_id",v.optString("id"));row.put("tag",v.optString("tag"));
+      row.put("hash",v.optString("hash"));row.put("size",v.optLong("size",0));
+      row.put("phone_modified",v.optLong("phoneModified",0));
+      database.insertWithOnConflict("receipts",null,row,android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE);
+     }catch(Exception ignored){}
+    }
+    database.setTransactionSuccessful();
+   }finally{database.endTransaction();}
+   legacy.edit().clear().commit();
+  }
+  syncPrefs.edit().putBoolean("receiptsMigrated",true).apply();
+ }
+ private static JSONObject rowToJson(android.database.Cursor cursor)throws JSONException{
+  return new JSONObject()
+   .put("phoneModified",cursor.getLong(6))
+   .put("pair",cursor.getString(0))
+   .put("path",cursor.getString(1))
+   .put("name",cursor.getString(2))
+   .put("id",cursor.getString(3))
+   .put("tag",cursor.getString(4))
+   .put("hash",cursor.getString(5))
+   .put("size",cursor.getLong(7));
+ }
  static synchronized JSONObject receipt(Context c,String pair,String path)throws Exception{
-  String value=c.getSharedPreferences("file-receipts",0).getString(receiptKey(pair,path),null);return value==null?null:new JSONObject(value);
+  try(android.database.Cursor cursor=db(c).rawQuery(
+   "SELECT pair,path,name,remote_id,tag,hash,phone_modified,size FROM receipts WHERE pair=? AND path=?",
+   new String[]{pair,path})){
+   return cursor.moveToFirst()?rowToJson(cursor):null;
+  }
  }
  static synchronized void receipt(Context c,String pair,String path,String name,VersionedBackup.Receipt receipt)throws Exception{receipt(c,pair,path,name,receipt,0);}
  static synchronized void receipt(Context c,String pair,String path,String name,VersionedBackup.Receipt receipt,long phoneModified)throws Exception{
-  JSONObject value=new JSONObject().put("phoneModified",phoneModified).put("pair",pair).put("path",path).put("name",name).put("id",receipt.id).put("tag",receipt.tag).put("hash",receipt.hash).put("size",receipt.size);
-  if(!c.getSharedPreferences("file-receipts",0).edit().putString(receiptKey(pair,path),value.toString()).commit())throw new java.io.IOException("Could not save backup receipt");
+  android.content.ContentValues row=new android.content.ContentValues();
+  row.put("pair",pair);row.put("path",path);row.put("name",name);
+  row.put("remote_id",receipt.id);row.put("tag",receipt.tag==null?"":receipt.tag);
+  row.put("hash",receipt.hash);row.put("size",receipt.size);row.put("phone_modified",phoneModified);
+  if(db(c).insertWithOnConflict("receipts",null,row,android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE)<0)
+   throw new java.io.IOException("Could not save backup receipt");
  }
  static synchronized void forget(Context c,String pair,String path)throws Exception{
-  if(!c.getSharedPreferences("file-receipts",0).edit().remove(receiptKey(pair,path)).commit())throw new java.io.IOException("Could not update sync records");
+  db(c).delete("receipts","pair=? AND path=?",new String[]{pair,path});
  }
- /** Clears a folder pair's sync records. Used when its folders change, so nothing is mistaken for a deletion. */
+ /** Clears a folder pair's sync records and upload checkpoints. Used when its folders change, so nothing is mistaken for a deletion. */
  static synchronized void forgetAll(Context c,String pair)throws Exception{
-  SharedPreferences receipts=c.getSharedPreferences("file-receipts",0);
-  SharedPreferences.Editor edit=receipts.edit();
-  for(String key:receipts.getAll().keySet())if(key.startsWith(pair+":"))edit.remove(key);
-  if(!edit.commit())throw new java.io.IOException("Could not reset sync records");
+  db(c).delete("receipts","pair=?",new String[]{pair});
+  SharedPreferences checkpoints=c.getSharedPreferences("upload-checkpoints",Context.MODE_PRIVATE);
+  SharedPreferences.Editor edit=checkpoints.edit();
+  String prefix=pair+":";
+  for(String key:checkpoints.getAll().keySet())if(key.equals(pair)||key.startsWith(prefix))edit.remove(key);
+  edit.apply();
  }
  /** Sync records for every file inside a folder (path prefix ending in "/"). */
  static synchronized Map<String,JSONObject> under(Context c,String pair,String prefix)throws Exception{
   Map<String,JSONObject> found=new HashMap<>();
-  String key=pair+":"+prefix;
-  for(Map.Entry<String,?> entry:c.getSharedPreferences("file-receipts",0).getAll().entrySet())
-   if(entry.getKey().startsWith(key)&&entry.getValue() instanceof String)
-    found.put(entry.getKey().substring(pair.length()+1),new JSONObject((String)entry.getValue()));
+  try(android.database.Cursor cursor=db(c).rawQuery(
+   "SELECT pair,path,name,remote_id,tag,hash,phone_modified,size FROM receipts WHERE pair=? AND path>=? AND substr(path,1,?)=?",
+   new String[]{pair,prefix,String.valueOf(prefix.length()),prefix})){
+   while(cursor.moveToNext()){
+    JSONObject value=rowToJson(cursor);
+    found.put(value.getString("path"),value);
+   }
+  }
   return found;
  }
  static synchronized JSONArray files(Context c,String pair)throws Exception{
-  JSONArray files=new JSONArray();for(Object raw:c.getSharedPreferences("file-receipts",0).getAll().values()){
-   if(raw instanceof String){JSONObject value=new JSONObject((String)raw);if(pair.equals(value.optString("pair")))files.put(value);}
-  }return files;
+  JSONArray files=new JSONArray();
+  try(android.database.Cursor cursor=db(c).rawQuery(
+   "SELECT pair,path,name,remote_id,tag,hash,phone_modified,size FROM receipts WHERE pair=? ORDER BY path",
+   new String[]{pair})){
+   while(cursor.moveToNext())files.put(rowToJson(cursor));
+  }
+  return files;
  }
  static synchronized void history(Context c,String pairId,String message){
   try{

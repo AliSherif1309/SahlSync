@@ -85,14 +85,22 @@ final class Graph {
   String address=ROOT+"/me/drive/items/"+Uri.encode(itemId)+"/content";
   return authorization.send(token->RemoteContent.download(address,token,destination));
  }
+ boolean hasUploadCheckpoint(String parent,String name,String hash){
+  if(uploads==null||hash==null)return false;
+  String path="/me/drive/items/"+Uri.encode(parent)+":/"+Uri.encode(name)+":";
+  return uploads.hasCheckpoint(path,hash);
+ }
  JSONObject resumeUpload(String parent,String name,File file,String hash)throws Exception{
   if(uploads==null||file.length()<=10L*1024*1024)return null;
   String path="/me/drive/items/"+Uri.encode(parent)+":/"+Uri.encode(name)+":";
   return uploads.resume(path,file,hash);
  }
  JSONObject upload(String parent,String name,File file) throws Exception {
+  return upload(parent,name,file,null);
+ }
+ JSONObject upload(String parent,String name,File file,String hash) throws Exception {
   String path="/me/drive/items/"+Uri.encode(parent)+":/"+Uri.encode(name)+":";
-  if(uploads!=null&&file.length()>10L*1024*1024)return uploads.create(path,file);
+  if(uploads!=null&&file.length()>10L*1024*1024)return hash==null?uploads.create(path,file):uploads.create(path,file,hash);
   return putFile(ROOT+path+"/content?%40microsoft.graph.conflictBehavior=fail",file,"0");
  }
  JSONObject updateFile(String id,String expectedTag,File file)throws Exception{

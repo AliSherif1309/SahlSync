@@ -253,7 +253,7 @@ public final class MainActivity extends Activity {
     entry.setBackground(SahlTheme.rounded(this,android.graphics.Color.parseColor("#183029")));
     LinearLayout.LayoutParams gap=new LinearLayout.LayoutParams(-1,-2);gap.topMargin=SahlTheme.dp(this,10);entry.setLayoutParams(gap);
     pairs.addView(entry);
-    searchable.put(entry,(title+" "+pair.getString("remoteName")).toLowerCase(Locale.ROOT));
+    searchable.put(entry,(title+" "+pair.optString("remoteName")).toLowerCase(Locale.ROOT));
     LinearLayout actions=new LinearLayout(this);
     actions.setOrientation(LinearLayout.VERTICAL);
     actions.setVisibility(id.equals(openFolder)?View.VISIBLE:View.GONE);
@@ -276,7 +276,7 @@ public final class MainActivity extends Activity {
      heading.setText(title+(expanded?"  ▴":"  ▾"));
     });
     entry.addView(heading);
-    entry.addView(SahlTheme.label(this,directionLabel(pair)+" / "+pair.getString("remoteName")+"\n"+(pair.optBoolean("unmetered")?"Unmetered network":"Any network")+(pair.optBoolean("charging")?" / Charging":"")+(pair.optBoolean("daily")||pair.optInt("scheduleMode")!=0?" / Scheduled":" / Manual"),14,SahlTheme.MUTED));
+    entry.addView(SahlTheme.label(this,directionLabel(pair)+" / "+pair.optString("remoteName")+"\n"+(pair.optBoolean("unmetered")?"Unmetered network":"Any network")+(pair.optBoolean("charging")?" / Charging":"")+(pair.optBoolean("daily")||pair.optInt("scheduleMode")!=0?" / Scheduled":" / Manual"),14,SahlTheme.MUTED));
     TextView owner=SahlTheme.label(this,"",14,SahlTheme.MUTED);
     entry.addView(owner);
     ownerLabels.put(owner,pair);
