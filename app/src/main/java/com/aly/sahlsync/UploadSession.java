@@ -27,18 +27,38 @@ final class UploadSession {
   ConnectionFailure(IOException cause){super("Upload connection interrupted",cause);}
  }
 
+ private String checkpointKey(String path){return pair+":"+path;}
+
+ boolean hasCheckpoint(String path,String hash){
+  String expected=path+"\n"+hash;
+  if(matchesCheckpoint(checkpointKey(path),expected))return true;
+  return matchesCheckpoint(pair,expected);
+ }
+
+ private boolean matchesCheckpoint(String key,String expected){
+  try{
+   JSONObject checkpoint=new JSONObject(checkpoints.getString(key,"{}"));
+   return expected.equals(checkpoint.optString("identity"))&&!checkpoint.optString("url").isEmpty();
+  }catch(Exception ignored){return false;}
+ }
+
  JSONObject create(String path,File file)throws Exception{
   String hash;
   try(InputStream input=new FileInputStream(file)){hash=BackupRules.hash(input,null);}
+  return create(path,file,hash);
+ }
+
+ JSONObject create(String path,File file,String hash)throws Exception{
   JSONObject resumed=resume(path,file,hash);
   if(resumed!=null)return resumed;
   JSONObject item=new JSONObject().put("@microsoft.graph.conflictBehavior","fail");
   JSONObject created=graph.json("POST",path+"/createUploadSession",new JSONObject().put("item",item));
   String url=created.getString("uploadUrl");
+  String key=checkpointKey(path);
   JSONObject checkpoint=new JSONObject().put("identity",path+"\n"+hash).put("url",url);
-  if(!checkpoints.edit().putString(pair,checkpoint.toString()).commit())
+  if(!checkpoints.edit().putString(key,checkpoint.toString()).commit())
    throw new IOException("Could not save upload checkpoint");
-  return send(url,file,0,false);
+  return send(url,file,0,false,key);
  }
 
  /** Replaces an existing large file in chunks. If-Match makes OneDrive reject it if the file changed meanwhile. */
@@ -47,12 +67,17 @@ final class UploadSession {
    .toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
   JSONObject created=graph.request("POST",Graph.ROOT+"/me/drive/items/"+android.net.Uri.encode(itemId)+"/createUploadSession",
    body,"application/json",eTag);
-  return send(created.getString("uploadUrl"),file,0,false);
+  return send(created.getString("uploadUrl"),file,0,false,null);
  }
 
  JSONObject resume(String path,File file,String hash)throws Exception{
-  JSONObject checkpoint=new JSONObject(checkpoints.getString(pair,"{}"));
-  if(!(path+"\n"+hash).equals(checkpoint.optString("identity")))return null;
+  String key=checkpointKey(path);
+  JSONObject checkpoint=new JSONObject(checkpoints.getString(key,"{}"));
+  if(!(path+"\n"+hash).equals(checkpoint.optString("identity"))){
+   key=pair;
+   checkpoint=new JSONObject(checkpoints.getString(key,"{}"));
+   if(!(path+"\n"+hash).equals(checkpoint.optString("identity")))return null;
+  }
   String url=checkpoint.optString("url");
   if(url.isEmpty())return null;
   long offset;
@@ -60,14 +85,14 @@ final class UploadSession {
    offset=nextOffset(request(url,null,0,0,file.length()),file.length());
   }catch(Graph.HttpError error){
    if(error.status!=404&&error.status!=410)throw error;
-   checkpoints.edit().remove(pair).apply();
+   checkpoints.edit().remove(key).apply();
    return null;
   }
   Store.history(context,pair,"OneDrive upload checkpoint: "+offset+" of "+file.length()+" bytes already accepted.");
-  return send(url,file,offset,offset>0);
+  return send(url,file,offset,offset>0,key);
  }
 
- private JSONObject send(String url,File file,long offset,boolean resumed)throws Exception{
+ private JSONObject send(String url,File file,long offset,boolean resumed,String checkpointKey)throws Exception{
   long length=file.length();
   progress.onProgress(offset,length,resumed);
   try(RandomAccessFile input=new RandomAccessFile(file,"r")){
@@ -81,7 +106,7 @@ final class UploadSession {
     if(response.has("id")){
      if(!response.has("file")||response.optLong("size",-1)!=length)
       throw new IOException("OneDrive returned an incomplete upload result");
-     checkpoints.edit().remove(pair).apply();
+     if(checkpointKey!=null)checkpoints.edit().remove(checkpointKey).apply();
      progress.onProgress(length,length,resumed);
      return response;
     }

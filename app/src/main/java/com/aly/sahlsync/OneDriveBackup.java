@@ -15,6 +15,7 @@ final class OneDriveBackup implements VersionedBackup.Backend {
   if(!json.has("file"))throw new IOException("A folder blocks the backup filename");
   return new VersionedBackup.Item(json.getString("id"),json.optString("eTag"),json.getLong("size"));
  }
+ boolean hasCheckpoint(String filename,String hash){return graph.hasUploadCheckpoint(parent,filename,hash);}
  public VersionedBackup.Item resumeCreate(String filename,File source,String hash)throws Exception{
   JSONObject resumed=graph.resumeUpload(parent,filename,source,hash);
   return resumed==null?null:item(resumed);
@@ -28,6 +29,7 @@ final class OneDriveBackup implements VersionedBackup.Backend {
  }
  public String hash(VersionedBackup.Item item)throws Exception{return graph.contentHash(item.id);}
  public VersionedBackup.Item create(String filename,File source)throws Exception{return item(graph.upload(parent,filename,source));}
+ VersionedBackup.Item create(String filename,File source,String hash)throws Exception{return item(graph.upload(parent,filename,source,hash));}
  public VersionedBackup.Item update(VersionedBackup.Item expected,File source)throws Exception{return item(graph.updateFile(expected.id,expected.tag,source));}
  static String bucket(String path)throws Exception{return BackupRules.hash(new ByteArrayInputStream(path.getBytes(StandardCharsets.UTF_8)),null);}
  private String archiveFolder()throws Exception{

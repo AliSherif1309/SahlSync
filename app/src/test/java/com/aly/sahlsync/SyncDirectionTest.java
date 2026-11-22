@@ -16,6 +16,9 @@ public class SyncDirectionTest {
   assertEquals(SyncDirection.Action.UPLOAD,SyncDirection.NEWEST.choose(true,false,false,0,0));
   assertEquals(SyncDirection.Action.SKIP,SyncDirection.DOWNLOAD.choose(true,false,false,0,0));
   assertEquals(SyncDirection.Action.CONFLICT,SyncDirection.DOWNLOAD.choose(true,true,false,20,10));
+  assertEquals(SyncDirection.Action.SKIP,SyncDirection.UPLOAD.choose(false,true,false,0,0));
+  assertEquals(SyncDirection.Action.CONFLICT,SyncDirection.UPLOAD.choose(true,true,false,10,20));
+  assertEquals(SyncDirection.Action.UPLOAD,SyncDirection.UPLOAD.choose(true,true,false,20,10));
  }
  @Test public void deletionsFollowTheLastSync(){
   assertEquals(SyncDirection.Deletion.DELETE_CLOUD,SyncDirection.NEWEST.deletion(false,true,true,false,true));

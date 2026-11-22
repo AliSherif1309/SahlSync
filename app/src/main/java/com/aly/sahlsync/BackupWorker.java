@@ -13,7 +13,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 public final class BackupWorker extends Worker {
- private int uploaded,downloaded,deleted,unchanged,excluded,conflicts,visited,filesChecked;
+ private int uploaded,downloaded,deleted,unchanged,excluded,conflicts,filesChecked;
  private String current="Connecting";
  private String folderName="Sahl Sync";
  private void progress(){progress(0,0,false);}
@@ -24,7 +24,6 @@ public final class BackupWorker extends Worker {
    .putInt("unchanged",unchanged).putInt("conflicts",conflicts)
    .putLong("acceptedBytes",accepted).putLong("totalBytes",total).putBoolean("resumed",resumed).build());
  }
- private final Set<String> seen=new HashSet<>();
  public BackupWorker(@NonNull Context c,@NonNull WorkerParameters p){super(c,p);}
  static Constraints constraints(JSONObject pair){return new Constraints.Builder().setRequiredNetworkType(pair.optBoolean("unmetered",true)?NetworkType.UNMETERED:NetworkType.CONNECTED).setRequiresCharging(pair.optBoolean("charging",false)).setRequiresBatteryNotLow(true).build();}
  static void enqueue(Context c,JSONObject pair,boolean periodic){
@@ -66,13 +65,9 @@ public final class BackupWorker extends Worker {
     DocumentFile local=DocumentFile.fromTreeUri(c,Uri.parse(pair.getString("local")));
     if(local==null||!local.isDirectory()||!local.canRead())throw new IOException("Local folder permission is unavailable; select it again");
     graph.enableResumableUploads(c,getInputData().getString("pair"),this::progress);
-    if(SyncDirection.from(pair.optString("direction"))==SyncDirection.UPLOAD){
-     walk(c,graph,local.getUri(),pair.getString("remote"),"",pair,0);
-    }else{
-     FolderSync sync=new FolderSync(c,graph,pair,this::reportFolderProgress);
-     sync.run(Uri.parse(pair.getString("local")));
-     reportFolderProgress(sync,current);
-    }
+    FolderSync sync=new FolderSync(c,graph,pair,this::reportFolderProgress);
+    sync.run(local.getUri());
+    reportFolderProgress(sync,current);
     String counts=filesChecked+" files checked, "+(uploaded+downloaded)+" synced ("+uploaded+" uploaded, "
      +downloaded+" downloaded), "+(deleted>0?deleted+" deleted, ":"")+unchanged+" unchanged";
     BackupCancellation.check();
@@ -170,55 +165,5 @@ public final class BackupWorker extends Worker {
  private static String failureHint(Exception e){
   if(e instanceof IllegalArgumentException)return "Check unsupported file names.";
   return "Check folder access, free storage and the "+BackupRules.MAX_FILE_MIB+" MiB file limit.";
- }
- private void walk(Context c,Graph graph,Uri source,String remote,String path,JSONObject pair,int depth)throws Exception{
-  if(depth>32||!seen.add(source.toString()))throw new IOException("Folder nesting limit reached");
-  // Use the provider cursor directly: listFiles() can silently return an empty array on a failed query.
-  Uri children=android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(source,android.provider.DocumentsContract.getDocumentId(source));
-  try(android.database.Cursor cursor=c.getContentResolver().query(children,new String[]{android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID,android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME,android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE,android.provider.DocumentsContract.Document.COLUMN_SIZE},null,null,null)){
-   if(cursor==null)throw new IOException("Cannot list local folder");
-   while(cursor.moveToNext()){
-    if(isStopped()||Thread.currentThread().isInterrupted())throw new InterruptedException();
-    if(++visited>5000)throw new IOException("Alpha limit: 5000 items per run");
-    String name=cursor.getString(1),relative=path+name;
-    boolean directory=android.provider.DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(2));
-    if(FolderSync.reserved(name)||BackupRules.excluded(relative,pair.optString("exclude"))){excluded++;continue;}
-    if(!directory)filesChecked++;
-    current=relative;progress();BackupRules.validateName(name);
-    Uri uri=android.provider.DocumentsContract.buildDocumentUriUsingTree(source,cursor.getString(0));
-    if(directory){
-     walk(c,graph,uri,graph.folder(remote,name),relative+"/",pair,depth+1);
-    }else{
-     try{
-      BackupRules.requireFileSize(cursor.getLong(3));
-      upload(c,graph,uri,remote,name,relative,pair);
-     }catch(BackupRules.FileTooLarge error){
-      excluded++;
-      Store.history(c,getInputData().getString("pair"),relative+": skipped (over "+BackupRules.MAX_FILE_MIB+" MiB).");
-     }
-    }
-   }
-  }
- }
- private void upload(Context c,Graph graph,Uri uri,String parent,String name,String relative,JSONObject pair)throws Exception{
-  File stage=File.createTempFile("backup-",".tmp",c.getCacheDir());
-  try{
-   String hash;try(InputStream in=c.getContentResolver().openInputStream(uri);OutputStream out=new FileOutputStream(stage)){
-    if(in==null)throw new IOException("Cannot open file");hash=BackupRules.hash(in,out);
-   }
-   if(isStopped())throw new InterruptedException();
-   JSONObject saved=Store.receipt(c,pair.getString("id"),relative);
-   VersionedBackup.Receipt known=saved==null?null:new VersionedBackup.Receipt(saved.getString("id"),saved.optString("tag"),saved.getString("hash"),saved.getLong("size"));
-   VersionedBackup.Result result;
-   try{result=VersionedBackup.backup(new OneDriveBackup(c,graph,pair,parent,relative,name),name,stage,hash,known);}
-   catch(Graph.HttpError e){if(e.status!=409&&e.status!=412)throw e;conflicts++;Store.history(c,getInputData().getString("pair"),relative+": cloud conflict (HTTP "+e.status+"). No overwrite. Check the cloud copy before retrying.");return;}
-   switch(result.outcome){
-    case CREATED: case UPDATED: uploaded++;break;
-    case UNCHANGED: unchanged++;break;
-    case CONFLICT: conflicts++;Store.history(c,getInputData().getString("pair"),relative+": cloud contents changed or belong to an unknown file. No overwrite. Check the cloud copy before retrying.");return;
-   }
-   Store.receipt(c,pair.getString("id"),relative,name,result.receipt);
-   progress();
-  }finally{stage.delete();}
  }
 }

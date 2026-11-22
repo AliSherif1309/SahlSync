@@ -44,9 +44,11 @@ final class FolderSync {
  }
 
  void run(Uri tree)throws Exception{
-  if(!writable(resolver,tree))throw new IOException("Allow write access to this phone folder in backup settings");
+  if(direction!=SyncDirection.UPLOAD&&!writable(resolver,tree))
+   throw new IOException("Allow write access to this phone folder in backup settings");
   DocumentFile root=DocumentFile.fromTreeUri(context,tree);
-  if(root==null||!root.isDirectory()||!root.canWrite())throw new IOException("Phone folder is not writable");
+  if(root==null||!root.isDirectory()||!root.canRead()||(direction!=SyncDirection.UPLOAD&&!root.canWrite()))
+   throw new IOException(direction==SyncDirection.UPLOAD?"Phone folder is not readable":"Phone folder is not writable");
   walk(root.getUri(),pair.getString("remote"),"",0);
  }
 
@@ -113,7 +115,7 @@ final class FolderSync {
    boolean phoneFolder=phone!=null&&phone.directory();
    boolean cloudFolder=remote!=null&&remote.has("folder");
    if((phone!=null&&!phoneFolder&&(remote!=null||direction!=SyncDirection.DOWNLOAD))
-    ||(remote!=null&&!cloudFolder&&remote.has("file")))filesChecked++;
+    ||(remote!=null&&!cloudFolder&&direction!=SyncDirection.UPLOAD&&remote.has("file")))filesChecked++;
    progress.accept(this,relative);
    try{BackupRules.validateName(name);}
    catch(IllegalArgumentException error){conflict(relative,"Unsupported file name.");continue;}
@@ -128,6 +130,7 @@ final class FolderSync {
      if(!known.isEmpty()&&(phone==null?deleteCloudFolder(remote,relative,known):deletePhoneFolder(drive,phone,relative,known)))continue;
     }
     if(remote==null&&direction==SyncDirection.DOWNLOAD)continue;
+    if(phone==null&&direction==SyncDirection.UPLOAD)continue;
     Uri child=phone!=null?phone.uri:makeDocument(parent,Document.MIME_TYPE_DIR,name);
     String destination=remote!=null?remote.getString("id"):graph.folder(drive,name);
     walk(child,destination,relative+"/",depth+1);
@@ -149,6 +152,7 @@ final class FolderSync {
 
  private void syncFile(Uri parent,String drive,String name,String path,Local phone,JSONObject cloud)throws Exception{
   if(cloud==null&&direction==SyncDirection.DOWNLOAD)return;
+  if(phone==null&&direction==SyncDirection.UPLOAD)return;
   JSONObject receipt=Store.receipt(context,pairId,path);
   boolean cloudUnchanged=cloud!=null&&receipt!=null&&!cloud.optString("eTag").isEmpty()
    &&cloud.optString("id").equals(receipt.optString("id"))&&cloud.optString("eTag").equals(receipt.optString("tag"))
@@ -168,16 +172,16 @@ final class FolderSync {
   if(cloud!=null)BackupRules.requireFileSize(cloud.optLong("size",-1));
   File local=null;
   try{
-   String localHash=null;
+   LocalDigest phoneDigest=null;
    if(phone!=null){
-    local=File.createTempFile("sync-phone-",".tmp",context.getCacheDir());
-    try(InputStream input=resolver.openInputStream(phone.uri);OutputStream output=new FileOutputStream(local)){
-     if(input==null)throw new IOException("Cannot read phone file");
-     localHash=BackupRules.hash(input,output);
-    }
+    String cloudQx=quickXorHash(cloud);
+    boolean needQuickXor=cloud!=null&&!cloudQx.isEmpty()&&cloud.optLong("size",-1)==phone.size;
+    phoneDigest=digestPhone(phone.uri,needQuickXor);
    }
+   String localHash=phoneDigest==null?null:phoneDigest.sha256;
    OneDriveBackup backend=new OneDriveBackup(context,graph,pair,drive,path,name);
-   if(phone!=null&&direction==SyncDirection.NEWEST){
+   if(phone!=null&&direction!=SyncDirection.DOWNLOAD&&backend.hasCheckpoint(name,localHash)){
+    local=stageLocal(phone.uri,localHash);
     VersionedBackup.Item resumed=backend.resumeCreate(name,local,localHash);
     if(resumed!=null){remember(path,name,resumed,localHash,phone.modified);uploaded++;return;}
    }
@@ -187,9 +191,9 @@ final class FolderSync {
    if(phone!=null&&remote!=null){
     remoteHash=receipt!=null&&!remote.tag.isEmpty()&&remote.id.equals(receipt.optString("id"))
      &&remote.tag.equals(receipt.optString("tag"))&&remote.size==receipt.optLong("size",-1)
-     ?receipt.getString("hash"):sameQuickXor(cloud,local)?localHash:backend.hash(remote);
+     ?receipt.getString("hash"):sameQuickXor(cloud,phoneDigest)?localHash:backend.hash(remote);
    }
-   boolean same=localHash!=null&&localHash.equals(remoteHash)&&local.length()==remote.size;
+   boolean same=localHash!=null&&localHash.equals(remoteHash)&&phoneDigest.size==remote.size;
    long cloudModified=cloud==null?0:modified(cloud.optString("lastModifiedDateTime"));
    SyncDirection.Action action=direction.choose(phone!=null,remote!=null,same,phone==null?0:phone.modified,cloudModified);
    switch(action){
@@ -199,8 +203,9 @@ final class FolderSync {
     case UPLOAD:
      BackupCancellation.check();
      if(!stillSame(phone))throw new LocalConflict("Phone file changed during sync.");
+     if(local==null)local=stageLocal(phone.uri,localHash);
      VersionedBackup.Item saved;
-     if(remote==null)saved=backend.create(name,local);
+     if(remote==null)saved=backend.create(name,local,localHash);
      else{
       requireTag(remote);
       backend.archive(remote,remoteHash);
@@ -219,13 +224,57 @@ final class FolderSync {
   }finally{if(local!=null)local.delete();}
  }
 
- /** Uses OneDrive's own fingerprint so matching files don't need to be downloaded to compare. */
- private static boolean sameQuickXor(JSONObject cloud,File local){
+ private static final class LocalDigest {
+  final String sha256,quickXor;final long size;
+  LocalDigest(String sha256,String quickXor,long size){this.sha256=sha256;this.quickXor=quickXor;this.size=size;}
+ }
+
+ private LocalDigest digestPhone(Uri uri,boolean needQuickXor)throws Exception{
+  java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");
+  QuickXorHash qx=needQuickXor?new QuickXorHash():null;
+  long size=0;
+  try(InputStream input=resolver.openInputStream(uri)){
+   if(input==null)throw new IOException("Cannot read phone file");
+   byte[] buffer=new byte[65536];int count;
+   while((count=input.read(buffer))!=-1){
+    BackupCancellation.check();
+    size+=count;BackupRules.requireFileSize(size);
+    digest.update(buffer,0,count);
+    if(qx!=null)qx.update(buffer,0,count);
+   }
+  }
+  StringBuilder out=new StringBuilder();
+  for(byte v:digest.digest())out.append(String.format(Locale.ROOT,"%02x",v&255));
+  return new LocalDigest(out.toString(),qx==null?null:qx.digest(),size);
+ }
+
+ private File stageLocal(Uri uri,String expectedHash)throws Exception{
+  File local=File.createTempFile("sync-phone-",".tmp",context.getCacheDir());
+  boolean ok=false;
   try{
-   JSONObject hashes=cloud.optJSONObject("file")==null?null:cloud.getJSONObject("file").optJSONObject("hashes");
-   String expected=hashes==null?"":hashes.optString("quickXorHash");
-   return !expected.isEmpty()&&cloud.optLong("size",-1)==local.length()&&expected.equals(QuickXorHash.of(local));
-  }catch(Exception error){return false;}
+   String stagedHash;
+   try(InputStream input=resolver.openInputStream(uri);OutputStream output=new FileOutputStream(local)){
+    if(input==null)throw new IOException("Cannot read phone file");
+    stagedHash=BackupRules.hash(input,output);
+   }
+   if(!expectedHash.equals(stagedHash))throw new LocalConflict("Phone file changed during sync.");
+   ok=true;
+   return local;
+  }finally{if(!ok)local.delete();}
+ }
+
+ private static String quickXorHash(JSONObject cloud){
+  if(cloud==null)return "";
+  JSONObject file=cloud.optJSONObject("file");
+  JSONObject hashes=file==null?null:file.optJSONObject("hashes");
+  return hashes==null?"":hashes.optString("quickXorHash");
+ }
+
+ /** Uses OneDrive's own fingerprint so matching files don't need to be downloaded to compare. */
+ private static boolean sameQuickXor(JSONObject cloud,LocalDigest local){
+  if(local==null||local.quickXor==null)return false;
+  String expected=quickXorHash(cloud);
+  return !expected.isEmpty()&&cloud.optLong("size",-1)==local.size&&expected.equals(local.quickXor);
  }
 
  /** Cheap check that the phone file was not edited meanwhile (size and time), instead of re-reading it. */
