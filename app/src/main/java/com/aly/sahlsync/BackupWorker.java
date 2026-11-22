@@ -65,13 +65,9 @@ public final class BackupWorker extends Worker {
     DocumentFile local=DocumentFile.fromTreeUri(c,Uri.parse(pair.getString("local")));
     if(local==null||!local.isDirectory()||!local.canRead())throw new IOException("Local folder permission is unavailable; select it again");
     graph.enableResumableUploads(c,getInputData().getString("pair"),this::progress);
-    if(SyncDirection.from(pair.optString("direction"))==SyncDirection.UPLOAD){
-     walk(c,graph,local.getUri(),pair.getString("remote"),"",pair,0);
-    }else{
-     FolderSync sync=new FolderSync(c,graph,pair,this::reportFolderProgress);
-     sync.run(Uri.parse(pair.getString("local")));
-     reportFolderProgress(sync,current);
-    }
+    FolderSync sync=new FolderSync(c,graph,pair,this::reportFolderProgress);
+    sync.run(local.getUri());
+    reportFolderProgress(sync,current);
     String counts=filesChecked+" files checked, "+(uploaded+downloaded)+" synced ("+uploaded+" uploaded, "
      +downloaded+" downloaded), "+(deleted>0?deleted+" deleted, ":"")+unchanged+" unchanged";
     BackupCancellation.check();
