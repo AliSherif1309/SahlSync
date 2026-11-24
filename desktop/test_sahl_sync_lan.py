@@ -151,6 +151,30 @@ class LanCompanionTest(unittest.TestCase):
             self.assertEqual(self.put(path, b"blocked", "missing"), 409)
         self.assertFalse((self.folder.parent / "escape.txt").exists())
 
+    def test_pc_tls_keeps_fingerprint_across_folder_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "LAN"
+            first = Path(tmp) / "first"
+            second = Path(tmp) / "second"
+            first.mkdir()
+            second.mkdir()
+            _, fp1 = lan.pc_tls(state, first)
+            _, fp2 = lan.pc_tls(state, second)
+            self.assertEqual(fp1, fp2)
+
+    def test_persistent_hash_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "hashes.db"
+            sample = Path(tmp) / "sample.bin"
+            sample.write_bytes(b"hello cache")
+            lan.init_hash_cache(db)
+            first = lan.inventory(Path(tmp))["files"]["sample.bin"]["hash"]
+            with lan.HASH_LOCK:
+                lan.HASHES.clear()
+            lan.init_hash_cache(db)
+            with lan.HASH_LOCK:
+                self.assertIn(first, lan.HASHES.values())
+
 
 if __name__ == "__main__":
     unittest.main()
