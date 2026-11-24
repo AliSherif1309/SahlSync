@@ -48,6 +48,9 @@
   <activity android:name="com.microsoft.identity.client.BrowserTabActivity" android:exported="true">
    <intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="msauth" android:host="com.aly.sahlsync" android:path="/${msalSignature}"/></intent-filter>
   </activity>
+  <activity android:name=".GoogleAuthActivity" android:exported="true" android:launchMode="singleTask">
+   <intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="${googleRedirectScheme}" android:host="oauth2redirect"/></intent-filter>
+  </activity>
   <provider
    android:name=".UnionProvider"
    android:authorities="com.sahl.sync.union"
