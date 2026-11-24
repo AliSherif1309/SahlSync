@@ -30,7 +30,10 @@ public final class BackupWorker extends Worker {
   String id=pair.optString("id");Data data=new Data.Builder().putString("pair",id).putBoolean("legacyDaily",periodic).build();
   WorkManager wm=WorkManager.getInstance(c);
   if(periodic)wm.enqueueUniquePeriodicWork("scheduled-"+id,ExistingPeriodicWorkPolicy.UPDATE,new PeriodicWorkRequest.Builder(BackupWorker.class,24,TimeUnit.HOURS).setInputData(data).setConstraints(constraints(pair)).build());
-  else wm.enqueueUniqueWork("manual-"+id,ExistingWorkPolicy.KEEP,new OneTimeWorkRequest.Builder(BackupWorker.class).setInputData(data).setConstraints(constraints(pair)).build());
+  else wm.enqueueUniqueWork("manual-"+id,ExistingWorkPolicy.KEEP,new OneTimeWorkRequest.Builder(BackupWorker.class).setInputData(data).setConstraints(constraints(pair)).setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST).build());
+ }
+ @NonNull @Override public ForegroundInfo getForegroundInfo(){
+  return BackupNotifications.running(getApplicationContext(),0x40000000|(getId().hashCode()&0x3fffffff),folderName);
  }
  @NonNull @Override public Result doWork(){
   Context c=getApplicationContext();
@@ -104,7 +107,7 @@ public final class BackupWorker extends Worker {
    }catch(Exception e){
     if(BackupRetry.connectionFailure(e))
      return retryConnection(c,"Network interrupted while checking or uploading "+current+".");
-    Store.history(c,getInputData().getString("pair"),isStopped()?"Backup stopped; completed uploads are kept.":current+": stopped after "+uploaded+" uploads. "+failureHint(e)+" Tap Back up now to retry; completed files are kept.");
+    Store.history(c,getInputData().getString("pair"),isStopped()?"Backup stopped ("+stopReasonLabel()+"); completed uploads are kept.":current+": stopped after "+uploaded+" uploads. "+failureHint(e)+" Tap Back up now to retry; completed files are kept.");
     notifyResult("Could not finish. Open Backup activity to see details.");
     return Result.failure();
    }finally{BackupCancellation.clear();}
@@ -177,5 +180,22 @@ public final class BackupWorker extends Worker {
    return msg.endsWith(".")?msg:msg+".";
   }
   return "Check folder access, free storage and the "+BackupRules.MAX_FILE_MIB+" MiB file limit.";
+ }
+
+ private String stopReasonLabel(){
+  if(android.os.Build.VERSION.SDK_INT<31)return "interrupted";
+  switch(getStopReason()){
+   case WorkInfo.STOP_REASON_CANCELLED_BY_APP: return "cancelled";
+   case WorkInfo.STOP_REASON_USER: return "stopped by user/system";
+   case WorkInfo.STOP_REASON_TIMEOUT: return "time limit";
+   case WorkInfo.STOP_REASON_PREEMPT: return "preempted";
+   case WorkInfo.STOP_REASON_CONSTRAINT_CONNECTIVITY: return "network changed";
+   case WorkInfo.STOP_REASON_CONSTRAINT_BATTERY_NOT_LOW: return "low battery";
+   case WorkInfo.STOP_REASON_CONSTRAINT_CHARGING: return "unplugged";
+   case WorkInfo.STOP_REASON_BACKGROUND_RESTRICTION: return "background restricted";
+   case WorkInfo.STOP_REASON_APP_STANDBY: return "app standby";
+   case WorkInfo.STOP_REASON_QUOTA: return "execution quota";
+   default: return "reason "+getStopReason();
+  }
  }
 }
