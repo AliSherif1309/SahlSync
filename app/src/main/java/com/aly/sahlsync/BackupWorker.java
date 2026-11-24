@@ -63,10 +63,11 @@ public final class BackupWorker extends Worker {
     if(!isScheduled())startManualForeground(c);
     BackupCancellation.check();
     CloudDrive drive=openDrive(c,syncPair);
-    DocumentFile local=DocumentFile.fromTreeUri(c,Uri.parse(syncPair.local));
+    Uri tree=Uri.parse(syncPair.local);
+    DocumentFile local=DocumentFile.fromTreeUri(c,tree);
     if(local==null||!local.isDirectory()||!local.canRead())throw new IOException("Local folder permission is unavailable; select it again");
     FolderSync sync=new FolderSync(c,drive,syncPair,this::reportFolderProgress);
-    sync.run(local.getUri());
+    sync.run(tree);
     reportFolderProgress(sync,current);
     String counts=filesChecked+" files checked, "+(uploaded+downloaded)+" synced ("+uploaded+" uploaded, "
      +downloaded+" downloaded), "+(deleted>0?deleted+" deleted, ":"")+unchanged+" unchanged";
