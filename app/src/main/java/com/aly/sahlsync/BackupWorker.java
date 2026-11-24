@@ -26,11 +26,12 @@ public final class BackupWorker extends Worker {
  }
  public BackupWorker(@NonNull Context c,@NonNull WorkerParameters p){super(c,p);}
  static Constraints constraints(JSONObject pair){return new Constraints.Builder().setRequiredNetworkType(pair.optBoolean("unmetered",true)?NetworkType.UNMETERED:NetworkType.CONNECTED).setRequiresCharging(pair.optBoolean("charging",false)).setRequiresBatteryNotLow(true).build();}
+ static Constraints manualConstraints(JSONObject pair){return new Constraints.Builder().setRequiredNetworkType(pair.optBoolean("unmetered",true)?NetworkType.UNMETERED:NetworkType.CONNECTED).build();}
  static void enqueue(Context c,JSONObject pair,boolean periodic){
   String id=pair.optString("id");Data data=new Data.Builder().putString("pair",id).putBoolean("legacyDaily",periodic).build();
   WorkManager wm=WorkManager.getInstance(c);
   if(periodic)wm.enqueueUniquePeriodicWork("scheduled-"+id,ExistingPeriodicWorkPolicy.UPDATE,new PeriodicWorkRequest.Builder(BackupWorker.class,24,TimeUnit.HOURS).setInputData(data).setConstraints(constraints(pair)).build());
-  else wm.enqueueUniqueWork("manual-"+id,ExistingWorkPolicy.KEEP,new OneTimeWorkRequest.Builder(BackupWorker.class).setInputData(data).setConstraints(constraints(pair)).setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST).build());
+  else wm.enqueueUniqueWork("manual-"+id,ExistingWorkPolicy.KEEP,new OneTimeWorkRequest.Builder(BackupWorker.class).setInputData(data).setConstraints(manualConstraints(pair)).setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST).build());
  }
  @NonNull @Override public ForegroundInfo getForegroundInfo(){
   return BackupNotifications.running(getApplicationContext(),0x40000000|(getId().hashCode()&0x3fffffff),folderName);
