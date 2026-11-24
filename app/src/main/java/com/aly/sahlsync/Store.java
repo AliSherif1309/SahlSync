@@ -178,7 +178,10 @@ final class Store {
  /** Clears a folder pair's sync records and upload checkpoints. Used when its folders change, so nothing is mistaken for a deletion. */
  static synchronized void forgetAll(Context c,String pair)throws Exception{
   db(c).delete("receipts","pair=?",new String[]{pair});
-  SharedPreferences checkpoints=c.getSharedPreferences("upload-checkpoints",Context.MODE_PRIVATE);
+  clearCheckpoints(c.getSharedPreferences("upload-checkpoints",Context.MODE_PRIVATE),pair);
+  clearCheckpoints(c.getSharedPreferences("gdrive-upload-checkpoints",Context.MODE_PRIVATE),pair);
+ }
+ private static void clearCheckpoints(SharedPreferences checkpoints,String pair){
   SharedPreferences.Editor edit=checkpoints.edit();
   String prefix=pair+":";
   for(String key:checkpoints.getAll().keySet())if(key.equals(pair)||key.startsWith(prefix))edit.remove(key);

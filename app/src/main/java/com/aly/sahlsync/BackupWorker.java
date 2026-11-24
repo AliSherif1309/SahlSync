@@ -163,7 +163,7 @@ public final class BackupWorker extends Worker {
 
  private CloudDrive openDrive(Context c,SyncPair pair)throws Exception{
   if(pair.provider==SyncProvider.GOOGLE_DRIVE)
-   throw new IOException("Google Drive is not configured in this build yet.");
+   return new GoogleDriveDrive(c,pair.account,pair.id,this::progress);
   Graph graph=Auth.graph(Auth.open(c),pair.account);
   graph.enableResumableUploads(c,pair.id,this::progress);
   return new OneDriveDrive(graph);

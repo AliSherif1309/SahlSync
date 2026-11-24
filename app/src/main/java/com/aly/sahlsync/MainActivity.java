@@ -18,10 +18,11 @@ public final class MainActivity extends Activity {
  private final ExecutorService io=Executors.newSingleThreadExecutor();
  private IMultipleAccountPublicClientApplication auth;
  private List<IAccount> accounts=Collections.emptyList();
+ private List<GoogleAuth.Account> googleAccounts=Collections.emptyList();
  private final Map<TextView,JSONObject> ownerLabels=new LinkedHashMap<>();
  private LinearLayout content;
  private TextView status,history;
- private Button connectButton,disconnectButton;
+ private Button connectButton,connectGoogleButton,disconnectButton;
  private final List<Runnable> unwatch=new ArrayList<>();
  private final android.content.SharedPreferences.OnSharedPreferenceChangeListener historyListener=(prefs,key)->{if("historyVersion".equals(key)||"history".equals(key))runOnUiThread(this::refreshHistory);};
  private String pendingLocal;
@@ -35,14 +36,15 @@ public final class MainActivity extends Activity {
   super.onCreate(saved);if(saved!=null){pendingLocal=saved.getString("local");pendingWriteTree=saved.getString("writePair");}
   if(saved!=null){String cached=saved.getString("snapshot");if(cached!=null){java.io.File file=new java.io.File(cached);try{if(file.getCanonicalFile().getParentFile().equals(getCacheDir().getCanonicalFile()))pendingSnapshot=file;}catch(java.io.IOException ignored){}}pendingSnapshotName=saved.getString("snapshotName");}
   Store.prefs(this).registerOnSharedPreferenceChangeListener(historyListener);
+  googleAccounts=GoogleAuth.accounts(this);
   draw();
   if(saved==null){
    if(!Store.prefs(this).getBoolean("setupSeen",false))showBackgroundSetup();
    else offerBackgroundSetupForExistingSchedules();
   }
-  if(Auth.configured())io.execute(()->{try{IMultipleAccountPublicClientApplication app=Auth.open(getApplicationContext());runOnUiThread(()->{auth=app;loadAccount();});}catch(Exception e){runOnUiThread(()->{status.setText("Could not initialize Microsoft sign-in. Reopen the app to retry.");});}});
+  if(Auth.configured())io.execute(()->{try{IMultipleAccountPublicClientApplication app=Auth.open(getApplicationContext());runOnUiThread(()->{auth=app;loadAccount();});}catch(Exception e){runOnUiThread(()->{updateAccountStatus();});}});
  }
- @Override protected void onResume(){super.onResume();BackupNotifications.refreshStatus(this);if(auth!=null)loadAccount();
+ @Override protected void onResume(){super.onResume();BackupNotifications.refreshStatus(this);googleAccounts=GoogleAuth.accounts(this);updateAccountStatus();updateAccountButtons();if(auth!=null)loadAccount();
   UpdateCheckReceiver.schedule(this);if(!updateCheckedThisRun){updateCheckedThisRun=true;checkForUpdates(null);}}
  private void offerBackgroundSetupForExistingSchedules(){
   if(backgroundAllowed()||Store.prefs(this).getBoolean("backgroundSetupOffered",false))return;
@@ -169,20 +171,44 @@ public final class MainActivity extends Activity {
    }).show();
  }
 
+ private static final class CloudAccount {
+  final SyncProvider provider;
+  final String id,label;
+  final IAccount msal;
+  CloudAccount(SyncProvider provider,String id,String label,IAccount msal){
+   this.provider=provider;this.id=id;this.label=label;this.msal=msal;
+  }
+ }
+
  private void loadAccount(){
+  googleAccounts=GoogleAuth.accounts(this);
   IMultipleAccountPublicClientApplication session=auth;
-  if(session==null)return;
+  if(session==null){updateAccountStatus();updateAccountButtons();return;}
   io.execute(()->{
    try{
     List<IAccount> loaded=session.getAccounts();
     runOnUiThread(()->{
      if(isDestroyed()||isFinishing())return;
      accounts=new ArrayList<>(loaded);
-     status.setText(accounts.isEmpty()?"No Microsoft accounts connected":accounts.size()+" connected Microsoft account"+(accounts.size()==1?"":"s"));
+     updateAccountStatus();
      updateAccountButtons();
     });
-   }catch(Exception e){runOnUiThread(()->{if(!isDestroyed())status.setText("Could not read Microsoft accounts. Try again.");});}
+   }catch(Exception e){runOnUiThread(()->{if(!isDestroyed())updateAccountStatus();});}
   });
+ }
+
+ private void updateAccountStatus(){
+  if(status==null)return;
+  int ms=accounts.size(),gd=googleAccounts.size();
+  if(ms==0&&gd==0){
+   if(!Auth.configured()&&!GoogleAuth.configured())status.setText("Cloud sign-in setup is pending for this build.");
+   else status.setText("No cloud accounts connected");
+   return;
+  }
+  List<String> parts=new ArrayList<>();
+  if(ms>0)parts.add(ms+" Microsoft account"+(ms==1?"":"s"));
+  if(gd>0)parts.add(gd+" Google Drive account"+(gd==1?"":"s"));
+  status.setText("Connected: "+String.join(", ",parts));
  }
 
  private IAccount connectedAccount(String id){
@@ -195,12 +221,22 @@ public final class MainActivity extends Activity {
   return username==null||username.isEmpty()?"Microsoft account":username;
  }
 
- private void selectAccount(String title,boolean autoSelect,java.util.function.Consumer<IAccount> action){
-  List<IAccount> choices=new ArrayList<>(accounts);
-  if(choices.isEmpty()){message("Connect a Microsoft account first.");return;}
+ private List<CloudAccount> allCloudAccounts(){
+  List<CloudAccount> list=new ArrayList<>();
+  for(IAccount a:accounts)list.add(new CloudAccount(SyncProvider.ONEDRIVE,a.getId(),accountLabel(a),a));
+  for(GoogleAuth.Account g:googleAccounts)list.add(new CloudAccount(SyncProvider.GOOGLE_DRIVE,g.id,g.email,null));
+  return list;
+ }
+
+ private void selectCloudAccount(String title,boolean autoSelect,java.util.function.Consumer<CloudAccount> action){
+  List<CloudAccount> choices=allCloudAccounts();
+  if(choices.isEmpty()){message("Connect OneDrive or Google Drive first.");return;}
   if(autoSelect&&choices.size()==1){action.accept(choices.get(0));return;}
   String[] labels=new String[choices.size()];
-  for(int index=0;index<labels.length;index++)labels[index]=accountLabel(choices.get(index));
+  for(int i=0;i<labels.length;i++){
+   CloudAccount c=choices.get(i);
+   labels[i]="["+c.provider.displayName+"] "+c.label;
+  }
   Tr.builder(this).setTitle(title).setItems(labels,(dialog,index)->action.accept(choices.get(index)))
    .setNegativeButton("Cancel",null).show();
  }
@@ -217,10 +253,11 @@ public final class MainActivity extends Activity {
   scroll.setOnApplyWindowInsetsListener((v,insets)->{v.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());return insets;});
   content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);content.setFocusableInTouchMode(true);int p=SahlTheme.dp(this,20);content.setPadding(p,p,p,p);scroll.addView(content);setContentView(scroll);content.requestFocus();
   content.addView(SahlTheme.label(this,"Sahl Sync",30,SahlTheme.TEXT));
-  content.addView(SahlTheme.label(this,"Keep your phone, OneDrive and PC in sync.",15,SahlTheme.MUTED));
-  LinearLayout connect=card("Microsoft accounts");status=SahlTheme.label(this,Auth.configured()?"Loading account...":"Microsoft sign-in setup is pending for this build.",16,SahlTheme.MUTED);connect.addView(status);
+  content.addView(SahlTheme.label(this,"Keep your phone, cloud drives and PC in sync.",15,SahlTheme.MUTED));
+  LinearLayout connect=card("Cloud accounts");status=SahlTheme.label(this,"",16,SahlTheme.MUTED);connect.addView(status);
   connectButton=SahlTheme.button(this,"Connect OneDrive",this::connect);connect.addView(connectButton);
-  disconnectButton=SahlTheme.secondary(this,"Disconnect an account",this::disconnect);connect.addView(disconnectButton);updateAccountButtons();
+  connectGoogleButton=SahlTheme.button(this,"Connect Google Drive",this::connectGoogle);connect.addView(connectGoogleButton);
+  disconnectButton=SahlTheme.secondary(this,"Disconnect an account",this::disconnect);connect.addView(disconnectButton);updateAccountStatus();updateAccountButtons();
   connect.addView(SahlTheme.secondary(this,"Background & notifications",this::showBackgroundSetup));
   Button updates=SahlTheme.secondary(this,"Check for updates",()->{});
   updates.setOnClickListener(view->checkForUpdates(updates));
@@ -231,7 +268,7 @@ public final class MainActivity extends Activity {
   LinearLayout pairs=card("Folder backups");
   pairs.addView(SahlTheme.label(this,"Tap a folder to sync it or change its settings. Replaced and deleted files are kept in Version history.",14,SahlTheme.MUTED));
   pairs.addView(SahlTheme.button(this,"Add folder backup",()->{
-   if(accounts.isEmpty()){message("Connect OneDrive first.");return;}
+   if(allCloudAccounts().isEmpty()){message("Connect OneDrive or Google Drive first.");return;}
    pickPhoneFolder(42,null);
   }));
   try{
@@ -397,9 +434,10 @@ public final class MainActivity extends Activity {
     editingPair=original.optString("id");if(holder[0]!=null)holder[0].dismiss();
     pickPhoneFolder(45,Uri.parse(pair.optString("local")));
    }));
-   form.addView(SahlTheme.secondary(this,"Change OneDrive folder ("+pair.optString("remoteName")+")",()->{
+   String remoteProvider=SyncProvider.from(pair.optString("provider")).displayName;
+   form.addView(SahlTheme.secondary(this,"Change "+remoteProvider+" folder ("+pair.optString("remoteName")+")",()->{
     editingPair=original.optString("id");if(holder[0]!=null)holder[0].dismiss();
-    selectAccount("Choose a OneDrive account",true,owner->chooseRemote("root","OneDrive",owner));
+    selectCloudAccount("Choose a cloud account",true,owner->chooseCloudRemote(owner,"root",owner.provider.displayName));
    }));
    Spinner direction=addDirection(form,pair.optString("direction","upload"));
    CheckBox deletions=new CheckBox(this);deletions.setText("Sync deletions (two-way). Deleted files stay in Version history.");
@@ -448,11 +486,27 @@ public final class MainActivity extends Activity {
  private void updateAccountButtons(){
   connectButton.setEnabled(auth!=null);
   connectButton.setText(!Auth.configured()?"OneDrive setup required":auth==null?"Preparing OneDrive...":"Add Microsoft account");
-  disconnectButton.setEnabled(auth!=null&&!accounts.isEmpty());
+  connectGoogleButton.setEnabled(GoogleAuth.configured());
+  connectGoogleButton.setText(GoogleAuth.configured()?"Add Google Drive account":"Google Drive setup required");
+  disconnectButton.setEnabled(!accounts.isEmpty()||!googleAccounts.isEmpty());
   for(Map.Entry<TextView,JSONObject> entry:ownerLabels.entrySet())updateOwnerLabel(entry.getKey(),entry.getValue());
  }
 
+ private boolean pairAccountConnected(JSONObject pair){
+  String id=pair.optString("account");
+  if(SyncProvider.from(pair.optString("provider"))==SyncProvider.GOOGLE_DRIVE)
+   return GoogleAuth.account(this,id)!=null;
+  return connectedAccount(id)!=null;
+ }
+
  private void updateOwnerLabel(TextView label,JSONObject pair){
+  SyncProvider provider=SyncProvider.from(pair.optString("provider"));
+  if(provider==SyncProvider.GOOGLE_DRIVE){
+   GoogleAuth.Account owner=GoogleAuth.account(this,pair.optString("account"));
+   label.setText(owner==null?"Account: "+pair.optString("accountLabel","Google account")+" (connect to access)"
+    :"Account: "+owner.email);
+   return;
+  }
   IAccount owner=connectedAccount(pair.optString("account"));
   label.setText(owner==null?"Account: "+pair.optString("accountLabel","Microsoft account")+" (connect to access)"
    :"Account: "+accountLabel(owner));
@@ -469,15 +523,38 @@ public final class MainActivity extends Activity {
    .withScopes(Arrays.asList(Auth.SCOPES)).withPrompt(Prompt.SELECT_ACCOUNT).withCallback(callback).build());
  }
 
+ private void connectGoogle(){
+  try{
+   GoogleAuth.beginSignIn(this,new GoogleAuth.SignInCallback(){
+    @Override public void onSuccess(GoogleAuth.Account account){
+     runOnUiThread(()->{
+      if(isDestroyed()||isFinishing())return;
+      googleAccounts=GoogleAuth.accounts(MainActivity.this);
+      updateAccountStatus();
+      updateAccountButtons();
+     });
+    }
+    @Override public void onError(String msg){
+     runOnUiThread(()->message(msg));
+    }
+   });
+  }catch(Exception e){
+   message(e.getMessage()!=null?e.getMessage():"Could not start Google sign-in.");
+  }
+ }
+
  private void disconnect(){
-  if(auth==null)return;
-  selectAccount("Disconnect which account?",false,owner->Tr.builder(this)
-   .setTitle("Disconnect Microsoft account?")
-   .setMessage("Disconnect "+accountLabel(owner)+"? Backups for this account will require reconnecting it. Your folder settings stay saved.")
+  selectCloudAccount("Disconnect which account?",false,owner->Tr.builder(this)
+   .setTitle("Disconnect "+owner.provider.displayName+" account?")
+   .setMessage("Disconnect "+owner.label+"? Backups for this account will require reconnecting it. Your folder settings stay saved.")
    .setNegativeButton("Cancel",null).setPositiveButton("Disconnect",(dialog,button)->io.execute(()->{
     try{
      synchronized(BackupWorker.class){
-      if(!auth.removeAccount(owner))throw new java.io.IOException("Account was not removed");
+      if(owner.provider==SyncProvider.GOOGLE_DRIVE){
+       GoogleAuth.removeAccount(this,owner.id);
+      }else{
+       if(auth==null||!auth.removeAccount(owner.msal))throw new java.io.IOException("Account was not removed");
+      }
      }
      runOnUiThread(this::loadAccount);
     }catch(Exception error){runOnUiThread(()->message("Could not disconnect this account. Try again."));}
@@ -499,7 +576,7 @@ public final class MainActivity extends Activity {
    return;
   }
   if(request==42&&result==RESULT_OK&&data!=null&&data.getData()!=null){
-   Uri uri=data.getData();try{takeFolderGrant(data);pendingLocal=uri.toString();selectAccount("Choose a OneDrive account",true,owner->chooseRemote("root","OneDrive",owner));}catch(Exception e){message("Persistent folder access was not granted.");}
+   Uri uri=data.getData();try{takeFolderGrant(data);pendingLocal=uri.toString();selectCloudAccount("Choose a cloud account",true,owner->chooseCloudRemote(owner,"root",owner.provider.displayName));}catch(Exception e){message("Persistent folder access was not granted.");}
   }
  }
  private void pickPhoneFolder(int request,Uri initial){
@@ -539,7 +616,7 @@ public final class MainActivity extends Activity {
   Spinner picker=new Spinner(this);
   picker.setContentDescription("Sync mode");
   ArrayAdapter<String> options=new ArrayAdapter<>(this,android.R.layout.simple_spinner_item,
-   Tr.all(this,new String[]{"Upload only (phone to OneDrive)","Download only (OneDrive to phone)","Two-way (newest modified wins)"}));
+   Tr.all(this,new String[]{"Upload only (phone to cloud)","Download only (cloud to phone)","Two-way (newest modified wins)"}));
   options.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
   picker.setAdapter(options);
   picker.setSelection("newest".equals(saved)?2:"download".equals(saved)?1:0);
@@ -548,10 +625,11 @@ public final class MainActivity extends Activity {
  }
 
  private String directionLabel(JSONObject pair){
+  String cloud=SyncProvider.from(pair.optString("provider")).displayName;
   switch(SyncDirection.from(pair.optString("direction"))){
-   case DOWNLOAD:return "OneDrive to phone";
+   case DOWNLOAD:return cloud+" to phone";
    case NEWEST:return "Two-way (newest wins)";
-   default:return "Phone to OneDrive";
+   default:return "Phone to "+cloud;
   }
  }
 
@@ -560,7 +638,7 @@ public final class MainActivity extends Activity {
   Uri tree=Uri.parse(pair.getString("local"));
   if(selected!=0&&!FolderSync.writable(getContentResolver(),tree)){
    Tr.builder(this).setTitle("Allow writing to the phone folder?")
-    .setMessage("Select the same phone folder to allow Sahl Sync to save files from OneDrive.")
+    .setMessage("Select the same phone folder to allow Sahl Sync to save files from the cloud.")
     .setNegativeButton("Cancel",null).setPositiveButton("Select folder",(dialog,button)->{
      pendingWriteTree=tree.toString();
      pickPhoneFolder(44,tree);
@@ -571,6 +649,41 @@ public final class MainActivity extends Activity {
   return true;
  }
 
+ private void chooseCloudRemote(CloudAccount owner,String id,String name){
+  if(owner.provider==SyncProvider.GOOGLE_DRIVE)chooseGoogleRemote(owner,id,name);
+  else chooseRemote(id,name,owner.msal);
+ }
+
+ private void chooseGoogleRemote(CloudAccount owner,String id,String name){
+  status.setText("Loading Google Drive folders...");
+  io.execute(()->{
+   try{
+    GoogleDriveDrive gd=new GoogleDriveDrive(this,owner.id,null,null);
+    CloudDrive.RemoteItem parent="root".equals(id)?gd.rootFolder():new CloudDrive.RemoteItem(id,name,true,0,0,"","","",true,null);
+    List<CloudDrive.RemoteItem> folders=new ArrayList<>();
+    for(CloudDrive.RemoteItem item:gd.children(parent.id))if(item.folder)folders.add(item);
+    List<String> options=new ArrayList<>();
+    options.add("Use this folder");
+    options.add("Back to Google Drive root");
+    for(CloudDrive.RemoteItem f:folders)options.add(f.name);
+    runOnUiThread(()->{
+     loadAccount();
+     Tr.builder(this).setTitle(name).setItems(options.toArray(new String[0]),(d,index)->{
+      try{
+       if(index==0&&editingPair!=null)changeRemote(SyncProvider.GOOGLE_DRIVE,parent.id,name,owner.id,owner.label);
+       else if(index==0)configurePair(SyncProvider.GOOGLE_DRIVE,parent.id,name,owner.id,owner.label);
+       else if(index==1)chooseGoogleRemote(owner,"root","Google Drive");
+       else{
+        CloudDrive.RemoteItem folder=folders.get(index-2);
+        chooseGoogleRemote(owner,folder.id,folder.name);
+       }
+      }catch(Exception e){message("Could not select folder.");}
+     }).setNegativeButton("Cancel",null).show();
+    });
+   }catch(Exception e){runOnUiThread(()->{loadAccount();message("Could not load Google Drive folders. Check connection and account permission.");});}
+  });
+ }
+
  private void chooseRemote(String id,String name,IAccount owner){
   if(auth==null)return;status.setText("Loading OneDrive folders...");
   io.execute(()->{
@@ -579,16 +692,16 @@ public final class MainActivity extends Activity {
     JSONObject parent=graph.json("GET","/me/drive/"+(id.equals("root")?"root":"items/"+Uri.encode(id)),null);
     JSONArray folders=graph.folders(parent.getString("id"));
     List<String> options=new ArrayList<>();options.add("Use this folder");options.add("Back to OneDrive root");for(int i=0;i<folders.length();i++)options.add(folders.getJSONObject(i).getString("name"));
-    runOnUiThread(()->{loadAccount();Tr.builder(this).setTitle(name).setItems(options.toArray(new String[0]),(d,index)->{try{if(index==0&&editingPair!=null)changeRemote(parent.getString("id"),name,owner);else if(index==0)configurePair(parent.getString("id"),name,owner);else if(index==1)chooseRemote("root","OneDrive",owner);else{JSONObject folder=folders.getJSONObject(index-2);chooseRemote(folder.getString("id"),folder.getString("name"),owner);}}catch(Exception e){message("Could not select folder.");}}).setNegativeButton("Cancel",null).show();});
+    runOnUiThread(()->{loadAccount();Tr.builder(this).setTitle(name).setItems(options.toArray(new String[0]),(d,index)->{try{if(index==0&&editingPair!=null)changeRemote(SyncProvider.ONEDRIVE,parent.getString("id"),name,owner.getId(),accountLabel(owner));else if(index==0)configurePair(SyncProvider.ONEDRIVE,parent.getString("id"),name,owner.getId(),accountLabel(owner));else if(index==1)chooseRemote("root","OneDrive",owner);else{JSONObject folder=folders.getJSONObject(index-2);chooseRemote(folder.getString("id"),folder.getString("name"),owner);}}catch(Exception e){message("Could not select folder.");}}).setNegativeButton("Cancel",null).show();});
    }catch(Exception e){runOnUiThread(()->{loadAccount();message("Could not load OneDrive folders. Check connection and account permission.");});}
   });
  }
  private String editingPair;
- private void changeRemote(String remote,String remoteName,IAccount owner)throws Exception{
+ private void changeRemote(SyncProvider provider,String remote,String remoteName,String accountId,String accountLabel)throws Exception{
   String id=editingPair;editingPair=null;
-  JSONObject pair=Store.pair(this,id).put("remote",remote).put("remoteName",remoteName)
-   .put("account",owner.getId()).put("accountLabel",accountLabel(owner));
-  changeFolders(pair,"OneDrive folder changed to "+remoteName);
+  JSONObject pair=Store.pair(this,id).put("provider",provider.id).put("remote",remote).put("remoteName",remoteName)
+   .put("account",accountId).put("accountLabel",accountLabel);
+  changeFolders(pair,provider.displayName+" folder changed to "+remoteName);
  }
  /** Saves new folders and resets sync records, so the next run compares both folders fresh and deletes nothing. */
  private void changeFolders(JSONObject pair,String note)throws Exception{
@@ -600,7 +713,7 @@ public final class MainActivity extends Activity {
   message(note+". Tap Back up now to sync.");
   draw();loadAccount();
  }
- private void configurePair(String remote,String remoteName,IAccount owner){
+ private void configurePair(SyncProvider provider,String remote,String remoteName,String accountId,String accountLabel){
   LinearLayout form=new LinearLayout(this);form.setOrientation(LinearLayout.VERTICAL);int pad=SahlTheme.dp(this,20);form.setPadding(pad,pad,pad,pad);
   EditText name=new EditText(this);name.setHint("Backup name");name.setSingleLine(true);form.addView(name);
   EditText exclude=new EditText(this);exclude.setHint("Exclusions, one pattern per line: *.tmp");form.addView(exclude);
@@ -612,19 +725,21 @@ public final class MainActivity extends Activity {
   AlertDialog dialog=Tr.builder(this).setTitle("Create folder backup").setView(scroll).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
   dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
    try{String title=name.getText().toString().trim();if(title.isEmpty()){name.setError("Enter a backup name");return;}
-    JSONObject pair=new JSONObject().put("id",UUID.randomUUID().toString()).put("name",title).put("local",pendingLocal).put("remote",remote).put("remoteName",remoteName).put("account",owner.getId()).put("accountLabel",accountLabel(owner)).put("exclude",exclude.getText().toString()).put("unmetered",wifi.isChecked()).put("charging",charging.isChecked());
+    JSONObject pair=new JSONObject().put("id",UUID.randomUUID().toString()).put("name",title).put("provider",provider.id).put("local",pendingLocal).put("remote",remote).put("remoteName",remoteName).put("account",accountId).put("accountLabel",accountLabel).put("exclude",exclude.getText().toString()).put("unmetered",wifi.isChecked()).put("charging",charging.isChecked());
     if(!applyDirection(pair,direction))return;
     long due=schedule.apply(pair);
     synchronized(BackupSchedule.class){Store.add(this,pair);if(due>0)BackupSchedule.enqueue(this,pair,due);}dialog.dismiss();draw();loadAccount();if(due>0)offerBackgroundSetup();
    }catch(IllegalArgumentException e){message(e.getMessage());}catch(Exception e){message("Could not save folder backup.");}
   }));dialog.show();
  }
- private Graph graphForPair(JSONObject pair)throws Exception{
+ private CloudDrive driveForPair(JSONObject pair)throws Exception{
+  SyncPair syncPair=SyncPair.fromJson(pair);
+  if(syncPair.provider==SyncProvider.GOOGLE_DRIVE)return new GoogleDriveDrive(this,syncPair.account,syncPair.id,null);
   if(auth==null)throw new java.io.IOException("Sign-in unavailable");
-  return Auth.graph(auth,pair.getString("account"));
+  return new OneDriveDrive(Auth.graph(auth,syncPair.account));
  }
  private void showVersionFiles(JSONObject pair){
-  if(connectedAccount(pair.optString("account"))==null){message("Connect the Microsoft account for this folder first.");return;}
+  if(!pairAccountConnected(pair)){message("Connect the cloud account for this folder first.");return;}
   try{
    JSONArray files=Store.files(this,pair.getString("id"));
    if(files.length()==0){message("Run this backup first. Version history stores the previous contents when a backed-up file changes.");return;}
@@ -635,28 +750,28 @@ public final class MainActivity extends Activity {
  private void showVersions(JSONObject pair,JSONObject file){
   io.execute(()->{
    try{
-    JSONArray versions=OneDriveBackup.versions(graphForPair(pair),pair,file.getString("path"));
+    List<CloudDrive.RemoteItem> versions=CloudBackup.versions(driveForPair(pair),SyncPair.fromJson(pair),file.getString("path"));
     runOnUiThread(()->{
      if(isFinishing()||isDestroyed())return;
-     if(versions.length()==0){message("No older copies yet. On the next change, Sahl Sync archives the current file before updating it. Old hash-named alpha copies are unchanged.");return;}
+     if(versions.isEmpty()){message("No older copies yet. On the next change, Sahl Sync archives the current file before updating it. Old hash-named alpha copies are unchanged.");return;}
      try{
-      String[] labels=new String[versions.length()];
-      for(int i=0;i<labels.length;i++){JSONObject version=versions.getJSONObject(i);String filename=version.getString("name");long date=Long.parseLong(filename.substring(0,filename.indexOf('-')));labels[i]=java.text.DateFormat.getDateTimeInstance().format(new Date(date))+" - "+version.optLong("size")+" bytes";}
+      String[] labels=new String[versions.size()];
+      for(int i=0;i<labels.length;i++){CloudDrive.RemoteItem version=versions.get(i);String filename=version.name;long date=Long.parseLong(filename.substring(0,filename.indexOf('-')));labels[i]=java.text.DateFormat.getDateTimeInstance().format(new Date(date))+" - "+version.size+" bytes";}
       Tr.builder(this).setTitle(file.getString("name")+" - older copies").setItems(labels,(d,index)->{
-       try{JSONObject version=versions.getJSONObject(index);Tr.builder(this).setTitle("Save older version?").setMessage("Save this version as a separate file on your phone. Your current file and cloud backup stay unchanged.").setNegativeButton("Cancel",null).setPositiveButton("Save a copy",(dialog,which)->downloadSnapshot(pair,file,version)).show();}catch(Exception e){message("Could not select version.");}
+       try{CloudDrive.RemoteItem version=versions.get(index);Tr.builder(this).setTitle("Save older version?").setMessage("Save this version as a separate file on your phone. Your current file and cloud backup stay unchanged.").setNegativeButton("Cancel",null).setPositiveButton("Save a copy",(dialog,which)->downloadSnapshot(pair,file,version)).show();}catch(Exception e){message("Could not select version.");}
       }).setNegativeButton("Close",null).show();
      }catch(Exception e){message("Could not display versions.");}
     });
    }catch(Exception e){runOnUiThread(()->message("Could not load version history. Check your connection and account."));}
   });
  }
- private void downloadSnapshot(JSONObject pair,JSONObject file,JSONObject snapshot){
+ private void downloadSnapshot(JSONObject pair,JSONObject file,CloudDrive.RemoteItem snapshot){
   io.execute(()->{
    java.io.File cached=null;
    try{
     cached=java.io.File.createTempFile("restore-",".tmp",getCacheDir());
-    String hash=graphForPair(pair).download(snapshot.getString("id"),cached);
-    if(!hash.equals(VersionedBackup.snapshotHash(snapshot.getString("name"))))throw new java.io.IOException("Stored version checksum mismatch");
+    String hash=driveForPair(pair).download(snapshot.id,cached);
+    if(!hash.equals(VersionedBackup.snapshotHash(snapshot.name)))throw new java.io.IOException("Stored version checksum mismatch");
     java.io.File ready=cached;
     runOnUiThread(()->{
      if(isFinishing()||isDestroyed()){ready.delete();return;}

@@ -10,9 +10,13 @@ android {
   versionName '1.2.5'
   def clientId = providers.gradleProperty('msalClientId').getOrElse('00000000-0000-0000-0000-000000000000')
   def signature = providers.gradleProperty('msalSignature').getOrElse('UNCONFIGURED')
+  def googleClientId = providers.gradleProperty('googleClientId').getOrElse('')
+  def googleRedirectScheme = providers.gradleProperty('googleRedirectScheme').getOrElse('com.aly.sahlsync')
   buildConfigField 'String', 'MSAL_CLIENT_ID', '"' + clientId + '"'
   buildConfigField 'String', 'MSAL_SIGNATURE', '"' + signature + '"'
-  manifestPlaceholders = [msalSignature: signature]
+  buildConfigField 'String', 'GOOGLE_CLIENT_ID', '"' + googleClientId + '"'
+  buildConfigField 'String', 'GOOGLE_REDIRECT_SCHEME', '"' + googleRedirectScheme + '"'
+  manifestPlaceholders = [msalSignature: signature, googleRedirectScheme: googleRedirectScheme]
  }
  buildTypes {
   debug { applicationIdSuffix '.preview' }
