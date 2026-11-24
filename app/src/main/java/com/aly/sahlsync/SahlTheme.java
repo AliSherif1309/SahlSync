@@ -53,4 +53,39 @@ final class SahlTheme {
   LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT);
   p.setMargins(0,dp(c,8),0,dp(c,8)); card.setLayoutParams(p); return card;
  }
+ static TextView badge(Context c,String text,int bgColor,int textColor){
+  TextView t=new TextView(c); t.setText(Tr.t(c,text)); t.setTextSize(12); t.setTextColor(textColor);
+  GradientDrawable bg=new GradientDrawable(); bg.setColor(bgColor); bg.setCornerRadius(dp(c,10));
+  t.setBackground(bg); t.setPadding(dp(c,8),dp(c,3),dp(c,8),dp(c,3));
+  Fonts.apply(c,t); return t;
+ }
+ static ProgressBar progressBar(Context c){
+  ProgressBar bar=new ProgressBar(c,null,android.R.attr.progressBarStyleHorizontal);
+  bar.setMax(100);
+  bar.setProgressTintList(ColorStateList.valueOf(GOLD));
+  bar.setProgressBackgroundTintList(ColorStateList.valueOf(Color.parseColor("#2E4A42")));
+  LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,dp(c,6));
+  p.setMargins(0,dp(c,6),0,dp(c,4)); bar.setLayoutParams(p);
+  bar.setVisibility(android.view.View.GONE);
+  return bar;
+ }
+ static Button compactButton(Context c,String title,Runnable click){
+  Button b=button(c,title,click);
+  b.setMinHeight(dp(c,44)); b.setTextSize(14);
+  return b;
+ }
+ static Button compactSecondary(Context c,String title,Runnable click){
+  Button b=secondary(c,title,click);
+  b.setMinHeight(dp(c,44)); b.setTextSize(14);
+  return b;
+ }
+ static Button tabButton(Context c,String title,boolean active,Runnable click){
+  Button b=new Button(c); b.setText(Tr.t(c,title)); b.setAllCaps(false); b.setTextSize(13);
+  b.setStateListAnimator(null); b.setMinHeight(dp(c,48)); b.setPadding(dp(c,6),dp(c,8),dp(c,6),dp(c,8));
+  b.setTextColor(active?DARK:MUTED);
+  b.setBackground(ripple(c,active?GOLD:Color.TRANSPARENT,0,Color.parseColor("#33E3B85C")));
+  LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f);
+  p.setMargins(dp(c,3),dp(c,4),dp(c,3),dp(c,4)); b.setLayoutParams(p);
+  b.setOnClickListener(v->click.run()); Fonts.apply(c,b); return b;
+ }
 }
