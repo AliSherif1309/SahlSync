@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 LIMIT = 2048 * 1024 * 1024
-MAX_ITEMS = 20000
+MAX_ITEMS = 100000
 BLOCK = 256 * 1024
 HASHES = {}  # (path, size, mtime, inode) -> hash; skips re-reading unchanged PC files
 HASH_LOCK = threading.Lock()

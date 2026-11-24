@@ -10,7 +10,7 @@ import java.util.*;
 import java.util.function.Consumer;
 
 final class LanFolderSync {
- private static final int MAX_ITEMS=20000;
+ private static final int MAX_ITEMS=100000;
  private final Context context;
  private final LanPeer peer;
  private final Mode mode;
@@ -24,12 +24,11 @@ final class LanFolderSync {
  static volatile int done,todo;
  private long lastReport;
  private boolean syncDeletions=true;
- private JSONObject lastState=new JSONObject(),hashCache=new JSONObject(),newCache=new JSONObject();
- private final JSONObject newState=new JSONObject();
+ private Map<String,Store.LanFileState> priorState=Collections.emptyMap();
+ private final Map<String,String> newLast=new HashMap<>(),newSig=new HashMap<>(),newHash=new HashMap<>();
  private final Map<String,DocumentFile> dirs=new HashMap<>();
 
  LanFolderSync deletions(boolean enabled){syncDeletions=enabled;return this;}
- private android.content.SharedPreferences store(){return context.getSharedPreferences("lan-sync-state",Context.MODE_PRIVATE);}
 
  LanFolderSync(Context context,LanPeer peer,Mode mode,String archiveKey,Consumer<String> progress){
   this.context=context;
@@ -48,8 +47,7 @@ final class LanFolderSync {
 
  String run(Uri uri)throws Exception{
   versions=new LanVersions(context,archiveKey,uri.toString());
-  try{lastState=new JSONObject(store().getString("state-"+archiveKey,"{}"));}catch(Exception ignored){lastState=new JSONObject();}
-  try{hashCache=new JSONObject(store().getString("hashes-"+archiveKey,"{}"));}catch(Exception ignored){hashCache=new JSONObject();}
+  priorState=Store.lanState(context,archiveKey);
   DocumentFile folder=DocumentFile.fromTreeUri(context,uri);
   if(folder==null||!folder.isDirectory()||!FolderSync.writable(context.getContentResolver(),uri))
    throw new IOException("Choose a writable phone folder again.");
@@ -68,7 +66,7 @@ final class LanFolderSync {
    registerName(path);
    paths.add(path);
   }
-  if(paths.size()>MAX_ITEMS)throw new IOException("Combined folders have more than 20,000 files.");
+  if(paths.size()>MAX_ITEMS)throw new IOException("Combined folders have more than 100,000 files.");
   int sent=0,received=0,checked=0,unchanged=0,conflicts=0;
   List<String> examples=new ArrayList<>();
   todo=paths.size();
@@ -81,17 +79,18 @@ final class LanFolderSync {
    String local=phone==null?"":phone.hash,remote=pc==null?"":pc.getString("hash");
    if(pc!=null&&(!remote.matches("[0-9a-f]{64}")||pc.getLong("size")<0))throw new IOException("Invalid PC file inventory.");
    try{
-    String last=lastState.optString(path,"");
+    Store.LanFileState prev=priorState.get(path);
+    String last=prev==null?"":prev.lastHash;
     if(mode==Mode.TWO_WAY&&syncDeletions&&!last.isEmpty()){
      if(phone==null&&pc!=null&&remote.equals(last)){deletePc(path,remote,pc.getLong("size"));deleted++;checked++;continue;}
      if(pc==null&&phone!=null&&local.equals(last)){deletePhone(path,phone);deleted++;checked++;continue;}
     }
-    if(!last.isEmpty())newState.put(path,last);
+    if(!last.isEmpty())newLast.put(path,last);
     switch(action(mode,local,remote,phone==null?0:phone.modified,pc==null?0:pc.optLong("modified"))){
-     case UNCHANGED: unchanged++;newState.put(path,local);break;
+     case UNCHANGED: unchanged++;newLast.put(path,local);break;
      case SKIP: skipped++;break;
-     case SEND: upload(path,phone,remote,pc==null?0:pc.getLong("size"));sent++;newState.put(path,phone.hash);break;
-     case RECEIVE: download(folder,path,local,remote,pc.getLong("size"));received++;newState.put(path,remote);break;
+     case SEND: upload(path,phone,remote,pc==null?0:pc.getLong("size"));sent++;newLast.put(path,phone.hash);break;
+     case RECEIVE: download(folder,path,local,remote,pc.getLong("size"));received++;newLast.put(path,remote);break;
      case CONFLICT: throw new LanPeer.Changed();
     }
    }catch(LanPeer.Changed conflict){
@@ -100,7 +99,13 @@ final class LanFolderSync {
    }
    checked++;
   }
-  store().edit().putString("state-"+archiveKey,newState.toString()).putString("hashes-"+archiveKey,newCache.toString()).apply();
+  Map<String,Store.LanFileState> merged=new HashMap<>();
+  Set<String> savePaths=new HashSet<>(newLast.keySet());
+  savePaths.addAll(newSig.keySet());
+  for(String p:savePaths){
+   merged.put(p,new Store.LanFileState(newLast.get(p),newSig.get(p),newHash.get(p)));
+  }
+  Store.saveLanState(context,archiveKey,merged);
   String summary=checked+" files checked · "+(sent+received)+" synced ("+sent+" sent, "+received+" received"
    +(deleted>0?", "+deleted+" deleted":"")+")"
    +"\n"+unchanged+" unchanged · "+skipped+" skipped · "+conflicts+" conflicts";
@@ -141,7 +146,7 @@ final class LanFolderSync {
    if(rows==null)throw new IOException("Could not read the phone folder.");
    while(rows.moveToNext()){
     BackupCancellation.check();
-    if(++visited>MAX_ITEMS)throw new IOException("Phone folder has more than 20,000 items.");
+    if(++visited>MAX_ITEMS)throw new IOException("Phone folder has more than 100,000 items.");
     String name=rows.getString(1);
     if(name==null)throw new IOException("Phone file name is unavailable.");
     if(FolderSync.reserved(name))continue;
@@ -159,9 +164,10 @@ final class LanFolderSync {
        progress.accept("Checking phone files… "+phoneFiles.size()+"\n"+path);
       }
       String signature=rows.getLong(3)+":"+rows.getLong(4);
-      JSONObject cached=hashCache.optJSONObject(path);
-      String digest=cached!=null&&rows.getLong(4)>0&&signature.equals(cached.optString("s"))?cached.optString("h"):hash(item,null);
-      newCache.put(path,new JSONObject().put("s",signature).put("h",digest));
+      Store.LanFileState cached=priorState.get(path);
+      String digest=cached!=null&&rows.getLong(4)>0&&signature.equals(cached.sig)?cached.hash:hash(item,null);
+      newSig.put(path,signature);
+      newHash.put(path,digest);
       if(phoneFiles.put(path,new LocalFile(item,digest,rows.getLong(4)))!=null)throw new IOException("Duplicate file name in phone folder.");
      }catch(BackupRules.FileTooLarge error){skipped++;}
     }
@@ -235,9 +241,15 @@ final class LanFolderSync {
   try{
    peer.download(path,source,remote,size);
    String[] parts=path.split("/");
+   String dirPath="";
    for(int i=0;i<parts.length-1;i++){
-    DocumentFile child=folder.findFile(parts[i]);
-    if(child==null)child=folder.createDirectory(parts[i]);
+    dirPath=dirPath.isEmpty()?parts[i]:dirPath+"/"+parts[i];
+    DocumentFile child=dirs.get(dirPath);
+    if(child==null){
+     child=folder.findFile(parts[i]);
+     if(child==null)child=folder.createDirectory(parts[i]);
+     if(child!=null&&child.isDirectory()&&parts[i].equals(child.getName()))dirs.put(dirPath,child);
+    }
     if(child==null||!child.isDirectory()||!parts[i].equals(child.getName()))throw new LanPeer.Changed();
     folder=child;
    }
