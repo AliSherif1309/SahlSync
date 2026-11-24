@@ -171,6 +171,10 @@ public final class BackupWorker extends Worker {
 
  private static String failureHint(Exception e){
   if(e instanceof IllegalArgumentException)return "Check unsupported file names.";
+  String msg=e.getMessage();
+  if((e instanceof IOException||e instanceof SecurityException)&&msg!=null&&!msg.trim().isEmpty()&&!msg.contains("http")){
+   return msg.endsWith(".")?msg:msg+".";
+  }
   return "Check folder access, free storage and the "+BackupRules.MAX_FILE_MIB+" MiB file limit.";
  }
 }
