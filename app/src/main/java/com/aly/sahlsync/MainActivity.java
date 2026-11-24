@@ -23,7 +23,7 @@ public final class MainActivity extends Activity {
  private TextView status,history;
  private Button connectButton,disconnectButton;
  private final List<Runnable> unwatch=new ArrayList<>();
- private final android.content.SharedPreferences.OnSharedPreferenceChangeListener historyListener=(prefs,key)->{if("history".equals(key))runOnUiThread(this::refreshHistory);};
+ private final android.content.SharedPreferences.OnSharedPreferenceChangeListener historyListener=(prefs,key)->{if("historyVersion".equals(key)||"history".equals(key))runOnUiThread(this::refreshHistory);};
  private String pendingLocal;
  private String pendingWriteTree;
  private String folderQuery="";
@@ -442,7 +442,7 @@ public final class MainActivity extends Activity {
  private void refreshHistory(){history.setText(historyText(3));}
  private String historyText(int limit){return historyText("history",limit);}
  private String historyText(String key,int limit){
-  try{JSONArray all=new JSONArray(Store.prefs(this).getString(key,"[]"));StringBuilder text=new StringBuilder();for(int i=0;i<Math.min(limit,all.length());i++){JSONObject row=all.getJSONObject(i);text.append(java.text.DateFormat.getDateTimeInstance().format(new Date(row.getLong("time")))).append('\n').append(row.getString("message")).append("\n\n");}return text.length()==0?"No backup runs yet.":text.toString();}
+  try{String pairId="history".equals(key)?null:key.substring("history-".length());JSONArray all=Store.historyList(this,pairId,limit);StringBuilder text=new StringBuilder();for(int i=0;i<all.length();i++){JSONObject row=all.getJSONObject(i);text.append(java.text.DateFormat.getDateTimeInstance().format(new Date(row.getLong("time")))).append('\n').append(row.getString("message")).append("\n\n");}return text.length()==0?"No backup runs yet.":text.toString();}
   catch(Exception e){return "History is unavailable.";}
  }
  private void updateAccountButtons(){

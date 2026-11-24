@@ -57,15 +57,15 @@ public final class BackupWorker extends Worker {
       if(getRunAttemptCount()==0)Store.history(c,pair.optString("id"),"Scheduled backup started.");
      }else if(getInputData().getBoolean("legacyDaily",false)&&!pair.optBoolean("daily"))return Result.success();
     }
-    folderName=pair.optString("name","Sahl Sync");
-    notifyEnabled=pair.optBoolean("notify",true);
+    SyncPair syncPair=SyncPair.fromJson(pair);
+    folderName=syncPair.name.isEmpty()?"Sahl Sync":syncPair.name;
+    notifyEnabled=syncPair.notify;
     if(!isScheduled())startManualForeground(c);
     BackupCancellation.check();
-    Graph graph=Auth.graph(Auth.open(c),pair.getString("account"));
-    DocumentFile local=DocumentFile.fromTreeUri(c,Uri.parse(pair.getString("local")));
+    CloudDrive drive=openDrive(c,syncPair);
+    DocumentFile local=DocumentFile.fromTreeUri(c,Uri.parse(syncPair.local));
     if(local==null||!local.isDirectory()||!local.canRead())throw new IOException("Local folder permission is unavailable; select it again");
-    graph.enableResumableUploads(c,getInputData().getString("pair"),this::progress);
-    FolderSync sync=new FolderSync(c,graph,pair,this::reportFolderProgress);
+    FolderSync sync=new FolderSync(c,drive,syncPair,this::reportFolderProgress);
     sync.run(local.getUri());
     reportFolderProgress(sync,current);
     String counts=filesChecked+" files checked, "+(uploaded+downloaded)+" synced ("+uploaded+" uploaded, "
@@ -75,14 +75,13 @@ public final class BackupWorker extends Worker {
     notifyResult(counts+", "+conflicts+" conflicts.");
     if(conflicts==0)return Result.success(new Data.Builder().putString("summary","Completed: "+counts).build());
     return Result.failure(new Data.Builder().putString("summary",counts+", "+conflicts+" conflicts. See Backup activity.").build());
-   }catch(Graph.HttpError e){
+   }catch(CloudDrive.HttpError e){
     if(isStopped())return Result.failure();
-    boolean retry=e.status==429||e.status>=500;
-    Store.history(c,getInputData().getString("pair"),current+": "+(retry&&getRunAttemptCount()<BackupRetry.MAX_RETRIES?"OneDrive is busy. Automatic retry queued.":"OneDrive HTTP "+e.status+". Check connection, sign-in, quota and destination access; then tap Back up now to retry."));
-    if(retry&&getRunAttemptCount()<BackupRetry.MAX_RETRIES)return Result.retry();
+    Store.history(c,getInputData().getString("pair"),current+": "+(e.retryable&&getRunAttemptCount()<BackupRetry.MAX_RETRIES?"Cloud service is busy. Automatic retry queued.":e.getMessage()+". Check connection, sign-in, quota and destination access; then tap Back up now to retry."));
+    if(e.retryable&&getRunAttemptCount()<BackupRetry.MAX_RETRIES)return Result.retry();
     notifyResult("Could not finish. Open Backup activity to see details.");
     return Result.failure();
-   }catch(UploadSession.ConnectionFailure e){
+   }catch(CloudDrive.ConnectionInterrupted e){
     boolean retry=!isStopped()&&getRunAttemptCount()<BackupRetry.MAX_RETRIES;
     Store.history(c,getInputData().getString("pair"),current+": "+(retry
      ?"Upload interrupted. Automatic retry queued."
@@ -90,7 +89,7 @@ public final class BackupWorker extends Worker {
     if(retry)return Result.retry();
     notifyResult("Upload interrupted. Open Backup activity to retry.");
     return Result.failure();
-   }catch(MsalUiRequiredException|Auth.SignInRequired e){
+   }catch(CloudDrive.AuthRequired|MsalUiRequiredException|Auth.SignInRequired e){
     return signInRequired(c);
    }catch(MsalException e){
     String code=e.getErrorCode();
@@ -160,6 +159,14 @@ public final class BackupWorker extends Worker {
  private void notifyResult(String summary){
   if(isStopped()||!notifyEnabled)return;
   BackupNotifications.finished(getApplicationContext(),getInputData().getString("pair"),folderName,isScheduled(),summary);
+ }
+
+ private CloudDrive openDrive(Context c,SyncPair pair)throws Exception{
+  if(pair.provider==SyncProvider.GOOGLE_DRIVE)
+   throw new IOException("Google Drive is not configured in this build yet.");
+  Graph graph=Auth.graph(Auth.open(c),pair.account);
+  graph.enableResumableUploads(c,pair.id,this::progress);
+  return new OneDriveDrive(graph);
  }
 
  private static String failureHint(Exception e){
