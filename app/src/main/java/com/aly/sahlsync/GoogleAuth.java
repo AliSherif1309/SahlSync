@@ -48,7 +48,7 @@ final class GoogleAuth {
 
  static boolean configured(){return !BuildConfig.GOOGLE_CLIENT_ID.trim().isEmpty();}
 
- static String redirectUri(){return BuildConfig.GOOGLE_REDIRECT_SCHEME+":/oauth2redirect";}
+ static String redirectUri(){return BuildConfig.GOOGLE_REDIRECT_SCHEME+"://oauth2redirect";}
 
  static void beginSignIn(Activity activity,SignInCallback callback)throws Exception{
   if(!configured())throw new IOException("Google Drive sign-in is not configured in this build.");
