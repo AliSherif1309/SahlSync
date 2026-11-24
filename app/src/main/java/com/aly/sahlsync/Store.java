@@ -7,28 +7,57 @@ import java.util.*;
 
 final class Store {
  static SharedPreferences prefs(Context c){return c.getSharedPreferences("sync",Context.MODE_PRIVATE);}
- static synchronized JSONArray pairs(Context c)throws Exception{return new JSONArray(prefs(c).getString("pairs","[]"));}
+ static synchronized List<SyncPair> syncPairs(Context c)throws Exception{
+  List<SyncPair> list=new ArrayList<>();
+  try(android.database.Cursor cursor=db(c).rawQuery("SELECT json FROM pairs ORDER BY sort_order ASC",null)){
+   while(cursor.moveToNext())list.add(SyncPair.fromJson(new JSONObject(cursor.getString(0))));
+  }
+  return list;
+ }
+ static synchronized JSONArray pairs(Context c)throws Exception{
+  JSONArray all=new JSONArray();
+  try(android.database.Cursor cursor=db(c).rawQuery("SELECT json FROM pairs ORDER BY sort_order ASC",null)){
+   while(cursor.moveToNext())all.put(new JSONObject(cursor.getString(0)));
+  }
+  return all;
+ }
  static synchronized void add(Context c,JSONObject pair)throws Exception{
-  JSONArray all=pairs(c);all.put(pair);if(!prefs(c).edit().putString("pairs",all.toString()).commit())throw new java.io.IOException("Could not save folder pair");
+  SyncPair typed=SyncPair.fromJson(pair);
+  android.database.sqlite.SQLiteDatabase database=db(c);
+  long nextOrder=0;
+  try(android.database.Cursor cursor=database.rawQuery("SELECT COALESCE(MAX(sort_order),-1)+1 FROM pairs",null)){
+   if(cursor.moveToFirst())nextOrder=cursor.getLong(0);
+  }
+  android.content.ContentValues row=new android.content.ContentValues();
+  row.put("id",typed.id);row.put("provider",typed.provider.id);
+  row.put("json",pair.toString());row.put("sort_order",nextOrder);
+  if(database.insertOrThrow("pairs",null,row)<0)throw new java.io.IOException("Could not save folder pair");
  }
  static synchronized void update(Context c,JSONObject pair)throws Exception{
-  JSONArray all=pairs(c);boolean found=false;
-  for(int i=0;i<all.length();i++)if(all.getJSONObject(i).getString("id").equals(pair.getString("id"))){all.put(i,pair);found=true;break;}
-  if(!found)throw new java.io.IOException("Folder pair not found");
-  if(!prefs(c).edit().putString("pairs",all.toString()).commit())throw new java.io.IOException("Could not save settings");
+  SyncPair typed=SyncPair.fromJson(pair);
+  android.content.ContentValues row=new android.content.ContentValues();
+  row.put("provider",typed.provider.id);row.put("json",pair.toString());
+  if(db(c).update("pairs",row,"id=?",new String[]{typed.id})<=0)
+   throw new java.io.IOException("Folder pair not found");
  }
  static synchronized void remove(Context c,String id)throws Exception{
-  JSONArray all=pairs(c),kept=new JSONArray();
-  for(int i=0;i<all.length();i++)if(!all.getJSONObject(i).getString("id").equals(id))kept.put(all.get(i));
-  if(!prefs(c).edit().putString("pairs",kept.toString()).remove("history-"+id).commit())throw new java.io.IOException("Could not remove folder");
+  android.database.sqlite.SQLiteDatabase database=db(c);
+  database.beginTransaction();
+  try{
+   database.delete("pairs","id=?",new String[]{id});
+   database.delete("history","pair_id=?",new String[]{id});
+   database.setTransactionSuccessful();
+  }finally{database.endTransaction();}
   forgetAll(c,id);
  }
- static JSONObject pair(Context c,String id)throws Exception{
-  JSONArray all=pairs(c);for(int i=0;i<all.length();i++)if(all.getJSONObject(i).getString("id").equals(id))return all.getJSONObject(i);
+ static synchronized JSONObject pair(Context c,String id)throws Exception{
+  try(android.database.Cursor cursor=db(c).rawQuery("SELECT json FROM pairs WHERE id=?",new String[]{id})){
+   if(cursor.moveToFirst())return new JSONObject(cursor.getString(0));
+  }
   throw new java.io.IOException("Folder pair not found");
  }
  private static final class ReceiptsDb extends android.database.sqlite.SQLiteOpenHelper {
-  ReceiptsDb(Context c){super(c.getApplicationContext(),"sahl_sync.db",null,1);}
+  ReceiptsDb(Context c){super(c.getApplicationContext(),"sahl_sync.db",null,2);}
   @Override public void onConfigure(android.database.sqlite.SQLiteDatabase db){db.enableWriteAheadLogging();}
   @Override public void onCreate(android.database.sqlite.SQLiteDatabase db){
    db.execSQL("CREATE TABLE IF NOT EXISTS receipts("
@@ -36,14 +65,26 @@ final class Store {
     +"remote_id TEXT NOT NULL,tag TEXT NOT NULL,hash TEXT NOT NULL,"
     +"size INTEGER NOT NULL,phone_modified INTEGER NOT NULL,PRIMARY KEY(pair,path))");
    db.execSQL("CREATE INDEX IF NOT EXISTS idx_receipts_pair ON receipts(pair)");
+   createPairsAndHistory(db);
   }
-  @Override public void onUpgrade(android.database.sqlite.SQLiteDatabase db,int oldVersion,int newVersion){}
+  @Override public void onUpgrade(android.database.sqlite.SQLiteDatabase db,int oldVersion,int newVersion){
+   if(oldVersion<2)createPairsAndHistory(db);
+  }
+  private static void createPairsAndHistory(android.database.sqlite.SQLiteDatabase db){
+   db.execSQL("CREATE TABLE IF NOT EXISTS pairs("
+    +"id TEXT PRIMARY KEY,provider TEXT NOT NULL,json TEXT NOT NULL,sort_order INTEGER NOT NULL)");
+   db.execSQL("CREATE TABLE IF NOT EXISTS history("
+    +"id INTEGER PRIMARY KEY AUTOINCREMENT,time INTEGER NOT NULL,pair_id TEXT,message TEXT NOT NULL)");
+   db.execSQL("CREATE INDEX IF NOT EXISTS idx_history_pair_time ON history(pair_id,time DESC)");
+   db.execSQL("CREATE INDEX IF NOT EXISTS idx_history_time ON history(time DESC)");
+  }
  }
  private static ReceiptsDb dbHelper;
  private static synchronized android.database.sqlite.SQLiteDatabase db(Context c){
   if(dbHelper==null)dbHelper=new ReceiptsDb(c);
   android.database.sqlite.SQLiteDatabase database=dbHelper.getWritableDatabase();
   migrateLegacyReceipts(c,database);
+  migrateLegacyPairsAndHistory(c,database);
   return database;
  }
  private static void migrateLegacyReceipts(Context c,android.database.sqlite.SQLiteDatabase database){
@@ -73,6 +114,36 @@ final class Store {
    legacy.edit().clear().commit();
   }
   syncPrefs.edit().putBoolean("receiptsMigrated",true).apply();
+ }
+ private static void migrateLegacyPairsAndHistory(Context c,android.database.sqlite.SQLiteDatabase database){
+  SharedPreferences syncPrefs=prefs(c);
+  if(syncPrefs.getBoolean("pairsHistoryMigrated",false))return;
+  database.beginTransaction();
+  try{
+   JSONArray oldPairs=new JSONArray(syncPrefs.getString("pairs","[]"));
+   for(int i=0;i<oldPairs.length();i++){
+    JSONObject p=oldPairs.getJSONObject(i);
+    String id=p.optString("id");
+    if(id.isEmpty())continue;
+    android.content.ContentValues row=new android.content.ContentValues();
+    row.put("id",id);row.put("provider",SyncProvider.from(p.optString("provider")).id);
+    row.put("json",p.toString());row.put("sort_order",i);
+    database.insertWithOnConflict("pairs",null,row,android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE);
+   }
+   JSONArray oldHistory=new JSONArray(syncPrefs.getString("history","[]"));
+   for(int i=oldHistory.length()-1;i>=0;i--){
+    JSONObject h=oldHistory.getJSONObject(i);
+    android.content.ContentValues row=new android.content.ContentValues();
+    row.put("time",h.optLong("time",System.currentTimeMillis()));
+    String pairId=h.optString("pairId","");
+    if(!pairId.isEmpty())row.put("pair_id",pairId);
+    row.put("message",h.optString("message"));
+    database.insert("history",null,row);
+   }
+   database.setTransactionSuccessful();
+  }catch(Exception ignored){}
+  finally{database.endTransaction();}
+  syncPrefs.edit().putBoolean("pairsHistoryMigrated",true).apply();
  }
  private static JSONObject rowToJson(android.database.Cursor cursor)throws JSONException{
   return new JSONObject()
@@ -135,21 +206,32 @@ final class Store {
   }
   return files;
  }
+ static synchronized JSONArray historyList(Context c,String pairId,int limit)throws Exception{
+  JSONArray result=new JSONArray();
+  String sql=pairId==null
+   ?"SELECT time,pair_id,message FROM history ORDER BY id DESC LIMIT ?"
+   :"SELECT time,pair_id,message FROM history WHERE pair_id=? ORDER BY id DESC LIMIT ?";
+  String[] args=pairId==null?new String[]{String.valueOf(limit)}:new String[]{pairId,String.valueOf(limit)};
+  try(android.database.Cursor cursor=db(c).rawQuery(sql,args)){
+   while(cursor.moveToNext()){
+    result.put(new JSONObject().put("time",cursor.getLong(0))
+     .put("pairId",cursor.isNull(1)?"":cursor.getString(1)).put("message",cursor.getString(2)));
+   }
+  }
+  return result;
+ }
  static synchronized void history(Context c,String pairId,String message){
   try{
-   JSONArray old=new JSONArray(prefs(c).getString("history","[]")),fresh=new JSONArray();
-   JSONObject entry=new JSONObject().put("time",System.currentTimeMillis()).put("pairId",pairId).put("message",message);
-   fresh.put(entry);
-   for(int i=0;i<Math.min(old.length(),49);i++)fresh.put(old.get(i));
-   SharedPreferences.Editor edit=prefs(c).edit().putString("history",fresh.toString());
-   if(pairId!=null){
-    String key="history-"+pairId;
-    JSONArray previous=new JSONArray(prefs(c).getString(key,"[]"));
-    JSONArray folderHistory=new JSONArray().put(entry);
-    for(int i=0;i<Math.min(previous.length(),49);i++)folderHistory.put(previous.get(i));
-    edit.putString(key,folderHistory.toString());
-   }
-   edit.commit();
+   long now=System.currentTimeMillis();
+   android.database.sqlite.SQLiteDatabase database=db(c);
+   android.content.ContentValues row=new android.content.ContentValues();
+   row.put("time",now);
+   if(pairId!=null)row.put("pair_id",pairId);
+   row.put("message",message);
+   database.insert("history",null,row);
+   // Keep newest 500 history entries globally so the table stays bounded.
+   database.execSQL("DELETE FROM history WHERE id NOT IN (SELECT id FROM history ORDER BY id DESC LIMIT 500)");
+   prefs(c).edit().putLong("historyVersion",now).apply();
   }catch(Exception ignored){/* History must never contain credentials or response bodies. */}
  }
 }

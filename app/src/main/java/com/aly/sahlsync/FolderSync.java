@@ -8,7 +8,7 @@ import android.provider.DocumentsContract;
 import android.provider.DocumentsContract.Document;
 import androidx.documentfile.provider.DocumentFile;
 import java.io.*;
-import java.time.Instant;
+import java.security.MessageDigest;
 import java.util.*;
 import java.util.function.BiConsumer;
 import org.json.*;
@@ -18,8 +18,8 @@ final class FolderSync {
  private static final String HISTORY_PREFIX="sahl-sync-previous-";
  private final Context context;
  private final ContentResolver resolver;
- private final Graph graph;
- private final JSONObject pair;
+ private final CloudDrive drive;
+ private final SyncPair pair;
  private final String pairId;
  private final SyncDirection direction;
  private final BiConsumer<FolderSync,String> progress;
@@ -27,13 +27,13 @@ final class FolderSync {
  private int visited;
  private final Set<String> clashes=new HashSet<>(),clashNames=new HashSet<>();
 
- FolderSync(Context context,Graph graph,JSONObject pair,BiConsumer<FolderSync,String> progress){
+ FolderSync(Context context,CloudDrive drive,SyncPair pair,BiConsumer<FolderSync,String> progress){
   this.context=context;
   resolver=context.getContentResolver();
-  this.graph=graph;
+  this.drive=drive;
   this.pair=pair;
-  pairId=pair.optString("id");
-  direction=SyncDirection.from(pair.optString("direction"));
+  pairId=pair.id;
+  direction=pair.direction;
   this.progress=progress;
  }
 
@@ -49,7 +49,7 @@ final class FolderSync {
   DocumentFile root=DocumentFile.fromTreeUri(context,tree);
   if(root==null||!root.isDirectory()||!root.canRead()||(direction!=SyncDirection.UPLOAD&&!root.canWrite()))
    throw new IOException(direction==SyncDirection.UPLOAD?"Phone folder is not readable":"Phone folder is not writable");
-  walk(root.getUri(),pair.getString("remote"),"",0);
+  walk(root.getUri(),pair.remote,"",0);
  }
 
  private static final class Local {
@@ -84,22 +84,21 @@ final class FolderSync {
  private static String key(String name){return name.toLowerCase(Locale.ROOT);}
  static boolean reserved(String name){
   String lower=key(name);
-  return lower.equals(OneDriveBackup.HISTORY)||lower.startsWith(TEMP_PREFIX)||lower.startsWith(HISTORY_PREFIX);
+  return lower.equals(CloudBackup.HISTORY)||lower.startsWith(TEMP_PREFIX)||lower.startsWith(HISTORY_PREFIX);
  }
  private void conflict(String path,String explanation){
   conflicts++;
   Store.history(context,pairId,path+": "+explanation);
  }
 
- private void walk(Uri parent,String drive,String path,int depth)throws Exception{
+ private void walk(Uri parent,String remoteFolderId,String path,int depth)throws Exception{
   if(depth>32){conflict(path,"Folder nesting is too deep; skipped.");return;}
   Map<String,Local> local=localChildren(parent);
-  Map<String,JSONObject> cloud=new LinkedHashMap<>();
-  JSONArray rows=graph.children(drive);
-  for(int index=0;index<rows.length();index++){
-   JSONObject row=rows.getJSONObject(index);
-   if(cloud.containsKey(key(row.getString("name")))){clashNames.add(key(row.getString("name")));continue;}
-   cloud.put(key(row.getString("name")),row);
+  Map<String,CloudDrive.RemoteItem> cloud=new LinkedHashMap<>();
+  for(CloudDrive.RemoteItem row:drive.children(remoteFolderId)){
+   String k=key(row.name);
+   if(cloud.containsKey(k)){clashNames.add(k);continue;}
+   cloud.put(k,row);
   }
   Set<String> names=new LinkedHashSet<>(local.keySet());
   names.addAll(cloud.keySet());
@@ -107,41 +106,44 @@ final class FolderSync {
    BackupCancellation.check();
    if(++visited>100000)throw new IOException("Sync limit: 100,000 items per run");
    Local phone=local.get(key);
-   JSONObject remote=cloud.get(key);
-   String name=phone==null?remote.getString("name"):phone.name;
+   CloudDrive.RemoteItem remote=cloud.get(key);
+   String name=phone==null?remote.name:phone.name;
    String relative=path+name;
    if(clashNames.remove(key)){conflict(relative,"Two names differ only by capital letters; rename one. Skipped.");continue;}
-   if(reserved(name)||BackupRules.excluded(relative,pair.optString("exclude"))){excluded++;continue;}
+   if(reserved(name)||BackupRules.excluded(relative,pair.exclude)){excluded++;continue;}
    boolean phoneFolder=phone!=null&&phone.directory();
-   boolean cloudFolder=remote!=null&&remote.has("folder");
+   boolean cloudFolder=remote!=null&&remote.folder;
    if((phone!=null&&!phoneFolder&&(remote!=null||direction!=SyncDirection.DOWNLOAD))
-    ||(remote!=null&&!cloudFolder&&direction!=SyncDirection.UPLOAD&&remote.has("file")))filesChecked++;
+    ||(remote!=null&&!cloudFolder&&direction!=SyncDirection.UPLOAD&&remote.supported))filesChecked++;
    progress.accept(this,relative);
    try{BackupRules.validateName(name);}
    catch(IllegalArgumentException error){conflict(relative,"Unsupported file name.");continue;}
-   if(remote!=null&&!name.equals(remote.getString("name"))){conflict(relative,"Names differ by case.");continue;}
+   if(remote!=null&&!name.equals(remote.name)){conflict(relative,"Names differ by case.");continue;}
    if((phoneFolder||cloudFolder)&&phone!=null&&remote!=null&&phoneFolder!=cloudFolder){
     conflict(relative,"A file and folder share the same name.");
     continue;
    }
    if(phoneFolder||cloudFolder){
-    if(direction==SyncDirection.NEWEST&&pair.optBoolean("syncDeletions",true)&&(phone==null)!=(remote==null)){
+    if(direction==SyncDirection.NEWEST&&pair.syncDeletions&&(phone==null)!=(remote==null)){
      Map<String,JSONObject> known=Store.under(context,pairId,relative+"/");
-     if(!known.isEmpty()&&(phone==null?deleteCloudFolder(remote,relative,known):deletePhoneFolder(drive,phone,relative,known)))continue;
+     if(!known.isEmpty()&&(phone==null?deleteCloudFolder(remote,relative,known):deletePhoneFolder(remoteFolderId,phone,relative,known)))continue;
     }
     if(remote==null&&direction==SyncDirection.DOWNLOAD)continue;
     if(phone==null&&direction==SyncDirection.UPLOAD)continue;
     Uri child=phone!=null?phone.uri:makeDocument(parent,Document.MIME_TYPE_DIR,name);
-    String destination=remote!=null?remote.getString("id"):graph.folder(drive,name);
+    String destination=remote!=null?remote.id:drive.ensureFolder(remoteFolderId,name);
     walk(child,destination,relative+"/",depth+1);
     continue;
    }
-   if(remote!=null&&(!remote.has("file")||remote.has("remoteItem")||remote.has("package"))){
-    conflict(relative,"Unsupported OneDrive item.");
+   if(remote!=null&&!remote.supported){
+    conflict(relative,remote.unsupportedReason!=null?remote.unsupportedReason:"Unsupported "+drive.providerName()+" item.");
     continue;
    }
-   try{syncFile(parent,drive,name,relative,phone,remote);}
-   catch(Graph.HttpError e){if(e.status!=409&&e.status!=412)throw e;conflict(relative,"OneDrive changed during sync. Retry after reviewing both copies.");}
+   try{syncFile(parent,remoteFolderId,name,relative,phone,remote);}
+   catch(CloudDrive.HttpError e){
+    if(!e.conflict)throw e;
+    conflict(relative,drive.providerName()+" changed during sync. Retry after reviewing both copies.");
+   }
    catch(BackupRules.FileTooLarge e){
     excluded++;
     Store.history(context,pairId,relative+": skipped (over "+BackupRules.MAX_FILE_MIB+" MiB).");
@@ -150,18 +152,18 @@ final class FolderSync {
   }
  }
 
- private void syncFile(Uri parent,String drive,String name,String path,Local phone,JSONObject cloud)throws Exception{
+ private void syncFile(Uri parent,String remoteFolderId,String name,String path,Local phone,CloudDrive.RemoteItem cloud)throws Exception{
   if(cloud==null&&direction==SyncDirection.DOWNLOAD)return;
   if(phone==null&&direction==SyncDirection.UPLOAD)return;
   JSONObject receipt=Store.receipt(context,pairId,path);
-  boolean cloudUnchanged=cloud!=null&&receipt!=null&&!cloud.optString("eTag").isEmpty()
-   &&cloud.optString("id").equals(receipt.optString("id"))&&cloud.optString("eTag").equals(receipt.optString("tag"))
-   &&cloud.optLong("size",-1)==receipt.optLong("size",-2);
+  boolean cloudUnchanged=cloud!=null&&receipt!=null&&!cloud.versionTag.isEmpty()
+   &&cloud.id.equals(receipt.optString("id"))&&cloud.versionTag.equals(receipt.optString("tag"))
+   &&cloud.size==receipt.optLong("size",-2);
   boolean phoneUnchanged=phone!=null&&receipt!=null&&phone.modified>0
    &&phone.modified==receipt.optLong("phoneModified",-1)&&phone.size==receipt.optLong("size",-2);
-  switch(pair.optBoolean("syncDeletions",true)?direction.deletion(phone!=null,cloud!=null,receipt!=null,phoneUnchanged,cloudUnchanged):SyncDirection.Deletion.NONE){
-   case DELETE_CLOUD: deleteCloud(drive,name,path,cloud,receipt);return;
-   case DELETE_PHONE: deletePhone(drive,name,path,phone);return;
+  switch(pair.syncDeletions?direction.deletion(phone!=null,cloud!=null,receipt!=null,phoneUnchanged,cloudUnchanged):SyncDirection.Deletion.NONE){
+   case DELETE_CLOUD: deleteCloud(remoteFolderId,name,path,cloud,receipt);return;
+   case DELETE_PHONE: deletePhone(remoteFolderId,name,path,phone);return;
    default: break;
   }
   if(receipt!=null&&(phone==null)!=(cloud==null)&&direction==SyncDirection.NEWEST)
@@ -169,32 +171,30 @@ final class FolderSync {
   // Fast path: neither side changed since the last sync, so skip reading and hashing the file.
   if(phoneUnchanged&&cloudUnchanged){unchanged++;return;}
   if(phone!=null)BackupRules.requireFileSize(phone.size);
-  if(cloud!=null)BackupRules.requireFileSize(cloud.optLong("size",-1));
+  if(cloud!=null)BackupRules.requireFileSize(cloud.size);
   File local=null;
   try{
-   LocalDigest phoneDigest=null;
+   CloudDrive.LocalDigest phoneDigest=null;
    if(phone!=null){
-    String cloudQx=quickXorHash(cloud);
-    boolean needQuickXor=cloud!=null&&!cloudQx.isEmpty()&&cloud.optLong("size",-1)==phone.size;
-    phoneDigest=digestPhone(phone.uri,needQuickXor);
+    boolean needFingerprint=cloud!=null&&!cloud.fingerprint.isEmpty()&&cloud.size==phone.size;
+    phoneDigest=digestPhone(phone.uri,needFingerprint&&drive.wantsQuickXor(),needFingerprint&&drive.wantsMd5());
    }
    String localHash=phoneDigest==null?null:phoneDigest.sha256;
-   OneDriveBackup backend=new OneDriveBackup(context,graph,pair,drive,path,name);
+   CloudBackup backend=new CloudBackup(context,drive,pair,remoteFolderId,path,name);
    if(phone!=null&&direction!=SyncDirection.DOWNLOAD&&backend.hasCheckpoint(name,localHash)){
     local=stageLocal(phone.uri,localHash);
     VersionedBackup.Item resumed=backend.resumeCreate(name,local,localHash);
     if(resumed!=null){remember(path,name,resumed,localHash,phone.modified);uploaded++;return;}
    }
-   VersionedBackup.Item remote=cloud==null?null:new VersionedBackup.Item(
-    cloud.getString("id"),cloud.optString("eTag"),cloud.getLong("size"));
+   VersionedBackup.Item remote=cloud==null?null:cloud.toBackupItem();
    String remoteHash=null;
    if(phone!=null&&remote!=null){
     remoteHash=receipt!=null&&!remote.tag.isEmpty()&&remote.id.equals(receipt.optString("id"))
      &&remote.tag.equals(receipt.optString("tag"))&&remote.size==receipt.optLong("size",-1)
-     ?receipt.getString("hash"):sameQuickXor(cloud,phoneDigest)?localHash:backend.hash(remote);
+     ?receipt.getString("hash"):drive.matchesFingerprint(cloud,phoneDigest)?localHash:backend.hash(remote);
    }
    boolean same=localHash!=null&&localHash.equals(remoteHash)&&phoneDigest.size==remote.size;
-   long cloudModified=cloud==null?0:modified(cloud.optString("lastModifiedDateTime"));
+   long cloudModified=cloud==null?0:cloud.modifiedMillis;
    SyncDirection.Action action=direction.choose(phone!=null,remote!=null,same,phone==null?0:phone.modified,cloudModified);
    switch(action){
     case SKIP: return;
@@ -210,27 +210,23 @@ final class FolderSync {
       requireTag(remote);
       backend.archive(remote,remoteHash);
       BackupCancellation.check();
-      if(!stillSame(phone))throw new LocalConflict("Phone file changed while the OneDrive copy was archived.");
+      if(!stillSame(phone))throw new LocalConflict("Phone file changed while the "+drive.providerName()+" copy was archived.");
       saved=backend.update(remote,local);
-      if(!remote.id.equals(saved.id))throw new IOException("OneDrive file identity changed");
+      if(!remote.id.equals(saved.id))throw new IOException(drive.providerName()+" file identity changed");
      }
      remember(path,name,saved,localHash,phone.modified);
      uploaded++;
      return;
     case DOWNLOAD:
-     download(parent,drive,name,path,phone,localHash,remote);
+     download(parent,remoteFolderId,name,path,phone,localHash,remote);
      downloaded++;
    }
   }finally{if(local!=null)local.delete();}
  }
 
- private static final class LocalDigest {
-  final String sha256,quickXor;final long size;
-  LocalDigest(String sha256,String quickXor,long size){this.sha256=sha256;this.quickXor=quickXor;this.size=size;}
- }
-
- private LocalDigest digestPhone(Uri uri,boolean needQuickXor)throws Exception{
-  java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");
+ private CloudDrive.LocalDigest digestPhone(Uri uri,boolean needQuickXor,boolean needMd5)throws Exception{
+  MessageDigest sha=MessageDigest.getInstance("SHA-256");
+  MessageDigest md5=needMd5?MessageDigest.getInstance("MD5"):null;
   QuickXorHash qx=needQuickXor?new QuickXorHash():null;
   long size=0;
   try(InputStream input=resolver.openInputStream(uri)){
@@ -239,13 +235,18 @@ final class FolderSync {
    while((count=input.read(buffer))!=-1){
     BackupCancellation.check();
     size+=count;BackupRules.requireFileSize(size);
-    digest.update(buffer,0,count);
+    sha.update(buffer,0,count);
+    if(md5!=null)md5.update(buffer,0,count);
     if(qx!=null)qx.update(buffer,0,count);
    }
   }
-  StringBuilder out=new StringBuilder();
-  for(byte v:digest.digest())out.append(String.format(Locale.ROOT,"%02x",v&255));
-  return new LocalDigest(out.toString(),qx==null?null:qx.digest(),size);
+  return new CloudDrive.LocalDigest(hex(sha.digest()),qx==null?null:qx.digest(),md5==null?null:hex(md5.digest()),size);
+ }
+
+ private static String hex(byte[] bytes){
+  StringBuilder out=new StringBuilder(bytes.length*2);
+  for(byte v:bytes)out.append(String.format(Locale.ROOT,"%02x",v&255));
+  return out.toString();
  }
 
  private File stageLocal(Uri uri,String expectedHash)throws Exception{
@@ -263,20 +264,6 @@ final class FolderSync {
   }finally{if(!ok)local.delete();}
  }
 
- private static String quickXorHash(JSONObject cloud){
-  if(cloud==null)return "";
-  JSONObject file=cloud.optJSONObject("file");
-  JSONObject hashes=file==null?null:file.optJSONObject("hashes");
-  return hashes==null?"":hashes.optString("quickXorHash");
- }
-
- /** Uses OneDrive's own fingerprint so matching files don't need to be downloaded to compare. */
- private static boolean sameQuickXor(JSONObject cloud,LocalDigest local){
-  if(local==null||local.quickXor==null)return false;
-  String expected=quickXorHash(cloud);
-  return !expected.isEmpty()&&cloud.optLong("size",-1)==local.size&&expected.equals(local.quickXor);
- }
-
  /** Cheap check that the phone file was not edited meanwhile (size and time), instead of re-reading it. */
  private boolean stillSame(Local phone){
   String[] columns={Document.COLUMN_SIZE,Document.COLUMN_LAST_MODIFIED};
@@ -285,57 +272,42 @@ final class FolderSync {
   }catch(Exception error){return false;}
  }
 
- private static long modified(String timestamp){
-  try{return Instant.parse(timestamp).toEpochMilli();}
-  catch(java.time.DateTimeException e){return 0;}
- }
-
  private void remember(String path,String name,VersionedBackup.Item item,String hash,long phoneModified)throws Exception{
   Store.receipt(context,pairId,path,name,new VersionedBackup.Receipt(item.id,item.tag,hash,item.size),phoneModified);
  }
 
- /**
-  * A folder deleted on the phone: if every file inside the OneDrive copy is exactly as last synced, archive each one
-  * to Version history and delete the OneDrive folder. Otherwise (something changed there) the folder is restored.
-  */
- private boolean deleteCloudFolder(JSONObject folder,String relative,Map<String,JSONObject> known)throws Exception{
-  List<JSONObject[]> files=new ArrayList<>();
-  if(!collectCloud(folder.getString("id"),relative+"/",known,files,0))return false;
-  for(JSONObject[] entry:files){
+ private boolean deleteCloudFolder(CloudDrive.RemoteItem folder,String relative,Map<String,JSONObject> known)throws Exception{
+  List<Object[]> files=new ArrayList<>();
+  if(!collectCloud(folder.id,relative+"/",known,files,0))return false;
+  for(Object[] entry:files){
    BackupCancellation.check();
-   JSONObject cloud=entry[0],receipt=entry[1];
-   String path=receipt.getString("path"),name=receipt.optString("name",cloud.getString("name"));
-   String parentId=cloud.getJSONObject("parentReference").getString("id");
-   new OneDriveBackup(context,graph,pair,parentId,path,name).archive(
-    new VersionedBackup.Item(cloud.getString("id"),cloud.getString("eTag"),cloud.getLong("size")),receipt.getString("hash"));
+   CloudDrive.RemoteItem cloud=(CloudDrive.RemoteItem)entry[0];
+   JSONObject receipt=(JSONObject)entry[1];
+   String path=receipt.getString("path"),name=receipt.optString("name",cloud.name);
+   String parentId=cloud.parentId.isEmpty()?folder.id:cloud.parentId;
+   new CloudBackup(context,drive,pair,parentId,path,name).archive(cloud.toBackupItem(),receipt.getString("hash"));
   }
-  graph.delete(folder.getString("id"),null);
-  for(JSONObject[] entry:files)Store.forget(context,pairId,entry[1].getString("path"));
-  Store.history(context,pairId,relative+"/: folder deleted from OneDrive ("+files.size()+" files kept in Version history).");
+  drive.delete(folder.id,null);
+  for(Object[] entry:files)Store.forget(context,pairId,((JSONObject)entry[1]).getString("path"));
+  Store.history(context,pairId,relative+"/: folder deleted from "+drive.providerName()+" ("+files.size()+" files kept in Version history).");
   deleted++;
   return true;
  }
 
- private boolean collectCloud(String folderId,String prefix,Map<String,JSONObject> known,List<JSONObject[]> out,int depth)throws Exception{
+ private boolean collectCloud(String folderId,String prefix,Map<String,JSONObject> known,List<Object[]> out,int depth)throws Exception{
   if(depth>32)return false;
-  JSONArray rows=graph.children(folderId);
-  for(int i=0;i<rows.length();i++){
-   JSONObject row=rows.getJSONObject(i);
-   String path=prefix+row.getString("name");
-   if(row.has("folder")){if(!collectCloud(row.getString("id"),path+"/",known,out,depth+1))return false;continue;}
+  for(CloudDrive.RemoteItem row:drive.children(folderId)){
+   String path=prefix+row.name;
+   if(row.folder){if(!collectCloud(row.id,path+"/",known,out,depth+1))return false;continue;}
    JSONObject receipt=known.get(path);
-   if(receipt==null||!row.optString("id").equals(receipt.optString("id"))||!row.optString("eTag").equals(receipt.optString("tag"))
-    ||row.optLong("size",-1)!=receipt.optLong("size",-2))return false;
-   out.add(new JSONObject[]{row,receipt});
+   if(receipt==null||!row.id.equals(receipt.optString("id"))||!row.versionTag.equals(receipt.optString("tag"))
+    ||row.size!=receipt.optLong("size",-2))return false;
+   out.add(new Object[]{row,receipt});
   }
   return true;
  }
 
- /**
-  * A folder deleted on OneDrive: if every phone file inside is exactly as last synced, save each one to Version
-  * history and delete the phone folder. Otherwise (something changed on the phone) the folder is uploaded again.
-  */
- private boolean deletePhoneFolder(String drive,Local folder,String relative,Map<String,JSONObject> known)throws Exception{
+ private boolean deletePhoneFolder(String remoteFolderId,Local folder,String relative,Map<String,JSONObject> known)throws Exception{
   List<Object[]> files=new ArrayList<>();
   if(!collectPhone(folder.uri,relative+"/",known,files,0))return false;
   for(Object[] entry:files){
@@ -348,12 +320,12 @@ final class FolderSync {
      if(input==null)throw new IOException("Cannot read phone file");
      hash=BackupRules.hash(input,output);
     }
-    new OneDriveBackup(context,graph,pair,drive,receipt.getString("path"),phone.name).archiveLocal(copy,hash);
+    new CloudBackup(context,drive,pair,remoteFolderId,receipt.getString("path"),phone.name).archiveLocal(copy,hash);
    }finally{copy.delete();}
   }
   if(!DocumentsContract.deleteDocument(resolver,folder.uri))throw new LocalConflict("Phone storage could not delete the folder.");
   for(Object[] entry:files)Store.forget(context,pairId,((JSONObject)entry[1]).getString("path"));
-  Store.history(context,pairId,relative+"/: folder deleted on the phone because it was deleted on OneDrive ("+files.size()+" files kept in Version history).");
+  Store.history(context,pairId,relative+"/: folder deleted on the phone because it was deleted on "+drive.providerName()+" ("+files.size()+" files kept in Version history).");
   deleted++;
   return true;
  }
@@ -370,19 +342,17 @@ final class FolderSync {
   return true;
  }
 
- /** Deleted on the phone: keep a verified copy in OneDrive history, then remove the cloud file. */
- private void deleteCloud(String drive,String name,String path,JSONObject cloud,JSONObject receipt)throws Exception{
+ private void deleteCloud(String remoteFolderId,String name,String path,CloudDrive.RemoteItem cloud,JSONObject receipt)throws Exception{
   BackupCancellation.check();
-  VersionedBackup.Item remote=new VersionedBackup.Item(cloud.getString("id"),cloud.getString("eTag"),cloud.getLong("size"));
-  new OneDriveBackup(context,graph,pair,drive,path,name).archive(remote,receipt.getString("hash"));
-  graph.delete(remote.id,remote.tag);
+  VersionedBackup.Item remote=cloud.toBackupItem();
+  new CloudBackup(context,drive,pair,remoteFolderId,path,name).archive(remote,receipt.getString("hash"));
+  drive.delete(remote.id,remote.tag);
   Store.forget(context,pairId,path);
-  Store.history(context,pairId,path+": deleted from OneDrive (a copy is in Version history).");
+  Store.history(context,pairId,path+": deleted from "+drive.providerName()+" (a copy is in Version history).");
   deleted++;
  }
 
- /** Deleted on OneDrive: rename the phone file to a recovery name instead of erasing it. */
- private void deletePhone(String drive,String name,String path,Local phone)throws Exception{
+ private void deletePhone(String remoteFolderId,String name,String path,Local phone)throws Exception{
   BackupCancellation.check();
   File copy=File.createTempFile("sync-deleted-",".tmp",context.getCacheDir());
   try{
@@ -391,43 +361,43 @@ final class FolderSync {
     if(input==null)throw new IOException("Cannot read phone file");
     hash=BackupRules.hash(input,output);
    }
-   new OneDriveBackup(context,graph,pair,drive,path,name).archiveLocal(copy,hash);
+   new CloudBackup(context,drive,pair,remoteFolderId,path,name).archiveLocal(copy,hash);
   }finally{copy.delete();}
   String kept=HISTORY_PREFIX+UUID.randomUUID()+"-"+phone.name.substring(0,Math.min(80,phone.name.length()));
   if(DocumentsContract.renameDocument(resolver,phone.uri,kept)==null)throw new LocalConflict("Phone storage could not move the deleted file aside.");
   Store.forget(context,pairId,path);
-  Store.history(context,pairId,path+": deleted on OneDrive; phone copy kept as "+kept+" and in Version history.");
+  Store.history(context,pairId,path+": deleted on "+drive.providerName()+"; phone copy kept as "+kept+" and in Version history.");
   deleted++;
  }
 
- private static void requireTag(VersionedBackup.Item item)throws LocalConflict{
-  if(item.tag.isEmpty())throw new LocalConflict("OneDrive did not return a file version. No file replaced.");
+ private void requireTag(VersionedBackup.Item item)throws LocalConflict{
+  if(item.tag.isEmpty())throw new LocalConflict(drive.providerName()+" did not return a file version. No file replaced.");
  }
 
- private void verifyCloud(String drive,String name,VersionedBackup.Item remote)throws Exception{
-  JSONObject actual=graph.item(drive,name);
-  if(!remote.id.equals(actual.optString("id"))||!remote.tag.equals(actual.optString("eTag"))
-   ||remote.size!=actual.optLong("size",-1))throw new LocalConflict("OneDrive file changed during download.");
+ private void verifyCloud(String remoteFolderId,String name,VersionedBackup.Item remote)throws Exception{
+  CloudDrive.RemoteItem actual=drive.item(remoteFolderId,name);
+  if(actual==null||!remote.id.equals(actual.id)||!remote.tag.equals(actual.versionTag)
+   ||remote.size!=actual.size)throw new LocalConflict(drive.providerName()+" file changed during download.");
  }
 
- private void download(Uri parent,String drive,String name,String path,Local original,String originalHash,
+ private void download(Uri parent,String remoteFolderId,String name,String path,Local original,String originalHash,
   VersionedBackup.Item remote)throws Exception{
   requireTag(remote);
-  if(remote.size<0)throw new LocalConflict("OneDrive did not report a valid file size.");
+  if(remote.size<0)throw new LocalConflict(drive.providerName()+" did not report a valid file size.");
   BackupRules.requireFileSize(remote.size);
   File staged=File.createTempFile("sync-cloud-",".tmp",context.getCacheDir());
   Uri temporary=null;
   boolean published=false;
   try{
-   String hash=graph.download(remote.id,staged);
-   if(staged.length()!=remote.size)throw new LocalConflict("Downloaded size differs from OneDrive.");
+   String hash=drive.download(remote.id,staged);
+   if(staged.length()!=remote.size)throw new LocalConflict("Downloaded size differs from "+drive.providerName()+".");
    temporary=makeDocument(parent,"application/octet-stream",TEMP_PREFIX+UUID.randomUUID());
    try(InputStream input=new FileInputStream(staged);OutputStream output=resolver.openOutputStream(temporary,"wt")){
     if(output==null)throw new IOException("Cannot stage the download on the phone");
     BackupRules.hash(input,output);
    }
    if(!hash.equals(hash(temporary)))throw new IOException("Phone download could not be verified");
-   verifyCloud(drive,name,remote);
+   verifyCloud(remoteFolderId,name,remote);
    BackupCancellation.check();
    Local current=localChildren(parent).get(key(name));
    if(original==null){
