@@ -40,7 +40,7 @@ final class Tr {
    "No paired PCs yet. Scan a QR code from SahlSyncPC to sync over Wi-Fi.","لا توجد أجهزة كمبيوتر مرتبطة بعد. امسح رمز QR من SahlSyncPC للمزامنة عبر Wi-Fi.",
    "Messages & apps","الرسائل والتطبيقات","Open messages & apps backup","فتح نسخ الرسائل والتطبيقات",
    "Back up or restore SMS, call logs, and installed app lists.","نسخ أو استعادة الرسائل وسجل المكالمات وقائمة التطبيقات.",
-   "Version & updates","الإصدار والتحديثات","Language","اللغة",
+   "Version & updates","الإصدار والتحديثات","Language","اللغة","Settings & history","الإعدادات والسجل",
    "Microsoft accounts","حسابات Microsoft","Connect OneDrive","ربط OneDrive","Disconnect an account","فصل حساب",
    "Background & notifications","العمل في الخلفية والإشعارات","Check for updates","التحقق من التحديثات","Checking for updates...","جارٍ التحقق من التحديثات...",
    "Sync with my PC (Wi-Fi)","المزامنة مع الكمبيوتر (Wi-Fi)","Sync with my PC","المزامنة مع الكمبيوتر",
