@@ -9,20 +9,51 @@ from pathlib import Path
 import re
 import secrets
 import shutil
+import sqlite3
 import ssl
 import stat
 import subprocess
 import tempfile
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 LIMIT = 2048 * 1024 * 1024
 MAX_ITEMS = 20000
 BLOCK = 256 * 1024
 HASHES = {}  # (path, size, mtime, inode) -> hash; skips re-reading unchanged PC files
+HASH_LOCK = threading.Lock()
+HASH_DB = None
 DELETED = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "SahlSync" / "Deleted"
 HASH = re.compile(r"[0-9a-f]{64}\Z")
 RESERVED = re.compile(r"(?i)(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\..*)?\Z")
+
+
+def init_hash_cache(db_path):
+    global HASH_DB
+    HASH_DB = db_path
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS hashes("
+            "path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL, ino INTEGER NOT NULL, digest TEXT NOT NULL)"
+        )
+        with HASH_LOCK:
+            for path, size, mtime_ns, ino, digest in conn.execute("SELECT path, size, mtime_ns, ino, digest FROM hashes"):
+                HASHES[(path, size, mtime_ns, ino)] = digest
+
+
+def save_hash_batch(entries):
+    if not HASH_DB or not entries:
+        return
+    try:
+        with sqlite3.connect(HASH_DB) as conn:
+            conn.executemany(
+                "INSERT OR REPLACE INTO hashes(path, size, mtime_ns, ino, digest) VALUES(?, ?, ?, ?, ?)",
+                entries,
+            )
+    except sqlite3.Error:
+        pass
 
 
 def parts(name):
@@ -46,26 +77,32 @@ def checked_stat(path):
     return info
 
 
-def inspect_file(path):
+def inspect_file(path, pending_save=None):
     info = checked_stat(path)
     if not stat.S_ISREG(info.st_mode) or info.st_size > LIMIT or info.st_nlink > 1:
         raise ValueError("Unsupported file")
     cached = (str(path), info.st_size, info.st_mtime_ns, info.st_ino)
-    digest = HASHES.get(cached)
+    with HASH_LOCK:
+        digest = HASHES.get(cached)
     if digest is None:
         with path.open("rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        if pending_save is not None:
+            pending_save.append((str(path), info.st_size, info.st_mtime_ns, info.st_ino, digest))
+        else:
+            save_hash_batch([(str(path), info.st_size, info.st_mtime_ns, info.st_ino, digest)])
     after = checked_stat(path)
     if (info.st_size, info.st_mtime_ns, info.st_ino) != (after.st_size, after.st_mtime_ns, after.st_ino):
         raise ValueError("File changed during inspection")
-    if len(HASHES) > 200_000:
-        HASHES.clear()
-    HASHES[cached] = digest
+    with HASH_LOCK:
+        if len(HASHES) > 200_000:
+            HASHES.clear()
+        HASHES[cached] = digest
     return {"hash": digest, "size": info.st_size, "modified": info.st_mtime_ns // 1_000_000}
 
 
 def inventory(root):
-    files, skipped = {}, []
+    files, skipped, pending_save = {}, [], []
     seen = set()
     visited = 0
 
@@ -92,11 +129,12 @@ def inventory(root):
                 walk(entry)
             else:
                 try:
-                    files[name] = inspect_file(entry)
+                    files[name] = inspect_file(entry, pending_save)
                 except (ValueError, OSError):
                     skipped.append(name)
 
     walk(root)
+    save_hash_batch(pending_save)
     return {"files": files, "skipped": len(skipped)}
 
 
@@ -140,6 +178,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         self.handle_request("delete")
 
+    def safe_send_error(self, code):
+        try:
+            self.send_error(code)
+        except (BrokenPipeError, ConnectionResetError, TimeoutError, ssl.SSLError, OSError):
+            pass
+
     def handle_request(self, upload):
         supplied = self.headers.get("Authorization", "").encode("utf-8")
         routes = getattr(self.server, "shares", None)
@@ -147,19 +191,23 @@ class Handler(BaseHTTPRequestHandler):
             routes = {self.server.authorization: self.server.folder}
         self.folder = next((folder for key, folder in routes.items() if hmac.compare_digest(supplied, key)), None)
         if self.folder is None:
-            self.send_error(401)
+            self.safe_send_error(401)
             return
         endpoint = urlsplit(self.path)
         try:
             if endpoint.path == "/v1/ping" and not upload:
+                report_status(self.server, f"Phone connected · {self.folder.name}")
                 self.body(200, b"{}", "application/json")
                 return
             if endpoint.path == "/v1/manifest" and not upload:
-                data = json.dumps(dict(inventory(self.folder), resume=1), ensure_ascii=False).encode("utf-8")
+                report_status(self.server, f"Scanning {self.folder.name}…")
+                manifest = inventory(self.folder)
+                report_status(self.server, f"Synced check · {len(manifest['files'])} files in {self.folder.name}")
+                data = json.dumps(dict(manifest, resume=1), ensure_ascii=False).encode("utf-8")
                 self.body(200, data, "application/json")
                 return
             if endpoint.path not in {"/v1/file", "/v1/upload-offset"}:
-                self.send_error(404)
+                self.safe_send_error(404)
                 return
             names = parse_qs(endpoint.query, strict_parsing=True, max_num_fields=1)
             if set(names) != {"path"} or len(names["path"]) != 1:
@@ -168,24 +216,27 @@ class Handler(BaseHTTPRequestHandler):
             if endpoint.path == "/v1/upload-offset" and not upload:
                 self.resume_status(name)
             elif endpoint.path == "/v1/file" and upload == "delete":
+                report_status(self.server, f"Removing {name}")
                 self.remove(name)
             elif endpoint.path == "/v1/file" and upload:
+                report_status(self.server, f"Receiving {name}")
                 if self.headers.get("X-Sahl-Total") is None:
                     self.receive(name)
                 else:
                     self.resume_upload(name)
             elif not upload:
+                report_status(self.server, f"Sending {name}")
                 self.send_file(name)
             else:
-                self.send_error(405)
+                self.safe_send_error(405)
         except FileNotFoundError:
-            self.send_error(404)
+            self.safe_send_error(404)
         except (ValueError, OverflowError, UnicodeError):
-            self.send_error(409)
-        except (BrokenPipeError, ConnectionResetError, TimeoutError):
+            self.safe_send_error(409)
+        except (BrokenPipeError, ConnectionResetError, TimeoutError, ssl.SSLError):
             pass
         except OSError:
-            self.send_error(500)
+            self.safe_send_error(500)
 
     def body(self, status, data, content_type):
         self.send_response(status)
@@ -399,7 +450,28 @@ class Handler(BaseHTTPRequestHandler):
                 stage.unlink(missing_ok=True)
 
 
-class Server(HTTPServer):
+def report_status(server, message):
+    status_file = getattr(server, "status_file", None)
+    if not status_file:
+        return
+    now = time.monotonic()
+    with getattr(server, "status_lock"):
+        if now - getattr(server, "last_status", 0.0) < 0.4 and "Synced check" not in message and "connected" not in message:
+            return
+        server.last_status = now
+        try:
+            status_file.write_text(
+                json.dumps({"time": time.strftime("%H:%M:%S"), "message": message}),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+
+
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
     def verify_request(self, request, client_address):
         # Listens on every network connection, but only answers devices on a private home network.
         try:
@@ -407,14 +479,17 @@ class Server(HTTPServer):
         except ValueError:
             return False
 
-    def get_request(self):
-        socket, address = super().get_request()
-        socket.settimeout(10)
+    def finish_request(self, request, client_address):
+        request.settimeout(30)
         try:
-            return self.tls.wrap_socket(socket, server_side=True), address
+            wrapped = self.tls.wrap_socket(request, server_side=True)
         except BaseException:
-            socket.close()
-            raise
+            self.shutdown_request(request)
+            return
+        try:
+            self.RequestHandlerClass(wrapped, client_address, self)
+        finally:
+            self.shutdown_request(wrapped)
 
 
 def create_certificate(cert, private_key):
@@ -439,11 +514,7 @@ def create_certificate(cert, private_key):
     return True
 
 
-def identity(state, folder):
-    key = hashlib.sha256(os.fsencode(str(folder).lower())).hexdigest()
-    state = state / key
-    state.mkdir(mode=0o700, parents=True, exist_ok=True)
-    cert, private_key, credential = (state / name for name in ("cert.pem", "key.pem", "pairing.txt"))
+def _ensure_cert(cert, private_key):
     if not cert.is_file() or not private_key.is_file():
         if not create_certificate(cert, private_key):
             openssl = shutil.which("openssl")
@@ -454,22 +525,44 @@ def identity(state, folder):
                  "-nodes", "-subj", "/CN=Sahl Sync LAN", "-keyout", str(private_key), "-out", str(cert)],
                 check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
+    fingerprint = hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.read_text(encoding="ascii"))).hexdigest()
+    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.minimum_version = ssl.TLSVersion.TLSv1_2
+    tls.load_cert_chain(cert, private_key)
+    return tls, fingerprint
+
+
+def pc_tls(state, fallback_folder=None):
+    """PC-wide TLS certificate so adding/removing/reordering folders never invalidates paired phones."""
+    tls_dir = state / "pc-tls"
+    tls_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    cert, private_key = tls_dir / "cert.pem", tls_dir / "key.pem"
+    if (not cert.is_file() or not private_key.is_file()) and fallback_folder is not None:
+        key = hashlib.sha256(os.fsencode(str(fallback_folder).lower())).hexdigest()
+        legacy_dir = state / key
+        if (legacy_dir / "cert.pem").is_file() and (legacy_dir / "key.pem").is_file():
+            shutil.copy2(legacy_dir / "cert.pem", cert)
+            shutil.copy2(legacy_dir / "key.pem", private_key)
+    return _ensure_cert(cert, private_key)
+
+
+def identity(state, folder):
+    key = hashlib.sha256(os.fsencode(str(folder).lower())).hexdigest()
+    state = state / key
+    state.mkdir(mode=0o700, parents=True, exist_ok=True)
+    cert, private_key, credential = (state / name for name in ("cert.pem", "key.pem", "pairing.txt"))
+    tls, fingerprint = _ensure_cert(cert, private_key)
     if not credential.is_file():
         credential.write_text(secrets.token_hex(32), encoding="ascii")
     token = credential.read_text(encoding="ascii").strip()
     if not HASH.fullmatch(token):
         raise SystemExit("Pairing credential is invalid.")
-    fingerprint = hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.read_text(encoding="ascii"))).hexdigest()
-    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    tls.minimum_version = ssl.TLSVersion.TLSv1_2
-    tls.load_cert_chain(cert, private_key)
     return tls, fingerprint, token
 
 
 def start_discovery(port, fingerprint):
     """Answers the phone's Wi-Fi broadcast so it can find this PC even after its address changes."""
     import socket
-    import threading
 
     def answer():
         try:
@@ -496,6 +589,7 @@ def main():
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--share", type=Path, action="append", default=[], help="Additional folder on the same port")
     parser.add_argument("--pairing-file", type=Path, help="Write pairing codes to a private JSON file")
+    parser.add_argument("--status-file", type=Path, help="Write live sync status to a JSON file")
     parser.add_argument("--qr", type=Path, help="Save a pairing QR image (requires qrcode)")
     args = parser.parse_args()
     if not any(args.listen in ipaddress.ip_network(block) for block in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8")):
@@ -510,6 +604,7 @@ def main():
     state = state.resolve()
     if state.is_relative_to(folder):
         parser.error("Select a folder that does not contain Sahl Sync's private settings.")
+    init_hash_cache(state / "hashes.db")
     roots = [folder]
     for additional in args.share:
         candidate = additional.absolute()
@@ -521,14 +616,17 @@ def main():
         if candidate in roots:
             parser.error("Select each folder only once.")
         roots.append(candidate)
-    tls, fingerprint, token = identity(state, folder)
+    tls, fingerprint = pc_tls(state, folder)
     codes = {}
     shares = {}
     # Bind to all connections: the PC keeps working when Wi-Fi connects late or its address changes.
     with Server(("0.0.0.0", args.port), Handler) as server:
         server.tls = tls
+        server.status_file = args.status_file.resolve() if args.status_file else None
+        server.status_lock = threading.Lock()
+        server.last_status = 0.0
         for root in roots:
-            secret = token if root == folder else identity(state, root)[2]
+            secret = identity(state, root)[2]
             shares[("Bearer " + secret).encode("ascii")] = root
             codes[str(root)] = f"SAHL1 {args.listen}:{args.port} {fingerprint} {secret}"
         server.shares = shares

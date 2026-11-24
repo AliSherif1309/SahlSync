@@ -14,10 +14,11 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 APP = "Sahl Sync for PC"
-VERSION = "1.2.2"
+VERSION = "1.3.4"
 STATE = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "SahlSync"
 SETTINGS = STATE / "pc.json"
 PAIRING = STATE / "pairing.json"
+STATUS = STATE / "status.json"
 LOG = STATE / "server.log"
 STARTUP = Path(os.environ.get("APPDATA", Path.home())) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "Sahl Sync for PC.cmd"
 
@@ -104,6 +105,7 @@ class App:
         self.port = ttk.Spinbox(net, from_=1024, to=65535, width=7)
         self.port.set(self.settings.get("port", 8765))
         self.port.pack(side="left", padx=8)
+        ttk.Button(net, text="Refresh IP", command=self.refresh_ip).pack(side="left", padx=4)
 
         tk.Label(root, text="Shared folders", bg=BG, fg=TEXT, font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=20, pady=(10, 2))
         self.folders = tk.Listbox(root, height=5, bg=PANEL, fg=TEXT, selectbackground=GOLD, selectforeground=DARK,
@@ -125,6 +127,8 @@ class App:
 
         self.status = tk.Label(root, text="Not sharing.", bg=BG, fg=MUTED, font=("Segoe UI", 10))
         self.status.pack(anchor="w", padx=20, pady=(8, 0))
+        self.activity = tk.Label(root, text="", bg=BG, fg=GOLD, font=("Segoe UI", 9))
+        self.activity.pack(anchor="w", padx=20, pady=(2, 0))
         self.qr = tk.Label(root, bg=BG)
         self.qr.pack(pady=8)
         self.copy = ttk.Button(root, text="Copy pairing code", command=self.copy_code)
@@ -223,6 +227,14 @@ class App:
             return [sys.executable, "serve"] + arguments
         return [sys.executable, str(Path(__file__).with_name("sahl_sync_pc.py")), "serve"] + arguments
 
+    def refresh_ip(self):
+        current = private_addresses()
+        self.address["values"] = current
+        if current and self.address.get().strip() not in current:
+            self.address.set(current[0])
+        if self.worker:
+            self.restart()
+
     def toggle(self):
         self.retry = None
         if self.worker:
@@ -231,6 +243,10 @@ class App:
         folders = list(self.folders.get(0, "end"))
         if not folders:
             messagebox.showinfo(APP, "Add a folder first.")
+            return
+        missing = [f for f in folders if not Path(f).is_dir()]
+        if missing:
+            self.status.configure(text=f"Folder unavailable: {missing[0]}", fg=GOLD)
             return
         current = private_addresses()
         self.address["values"] = current
@@ -244,21 +260,35 @@ class App:
             self.address.set(current[0])
         address = self.address.get().strip()
         self.save()
-        try:
-            PAIRING.unlink(missing_ok=True)
-        except OSError:
-            pass
+        for path in (PAIRING, STATUS):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
         arguments = [folders[0]]
         for extra in folders[1:]:
             arguments += ["--share", extra]
-        arguments += ["--listen", address, "--port", str(int(self.port.get())), "--pairing-file", str(PAIRING)]
+        arguments += ["--listen", address, "--port", str(int(self.port.get())),
+                      "--pairing-file", str(PAIRING), "--status-file", str(STATUS)]
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         self.worker = subprocess.Popen(self.command(arguments), creationflags=flags,
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.start.configure(text="Stop sharing")
         self.status.configure(text="Starting...", fg=MUTED)
+        self.activity.configure(text="")
         self.root.after(700, self.wait_for_codes, 0)
+        self.root.after(1000, self.watch_status)
         self.root.after(30_000, self.watch_address)
+
+    def watch_status(self):
+        if not self.worker:
+            return
+        try:
+            data = json.loads(STATUS.read_text(encoding="utf-8"))
+            self.activity.configure(text=f"Live ({data.get('time', '')}): {data.get('message', '')}")
+        except (OSError, ValueError):
+            pass
+        self.root.after(1000, self.watch_status)
 
     def watch_address(self):
         """If the PC's Wi-Fi address changes, restart sharing so the QR code shows the new address."""
@@ -308,6 +338,7 @@ class App:
         self.worker, self.codes = None, {}
         self.start.configure(text="Start sharing")
         self.status.configure(text="Not sharing.", fg=MUTED)
+        self.activity.configure(text="")
         self.update_tray("not sharing")
         self.qr.configure(image="")
         self.qr.image = None
