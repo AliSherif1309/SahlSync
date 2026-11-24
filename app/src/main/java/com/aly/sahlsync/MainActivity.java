@@ -20,8 +20,10 @@ public final class MainActivity extends Activity {
  private List<IAccount> accounts=Collections.emptyList();
  private List<GoogleAuth.Account> googleAccounts=Collections.emptyList();
  private final Map<TextView,JSONObject> ownerLabels=new LinkedHashMap<>();
- private LinearLayout content;
- private TextView status,history;
+ private LinearLayout content,pairsList,accountsList,tabBar;
+ private final ScrollView[] tabPages=new ScrollView[4];
+ private int activeTab=0;
+ private TextView status,history,lanSummary,settingsStatus;
  private Button connectButton,connectGoogleButton,disconnectButton;
  private final List<Runnable> unwatch=new ArrayList<>();
  private final android.content.SharedPreferences.OnSharedPreferenceChangeListener historyListener=(prefs,key)->{if("historyVersion".equals(key)||"history".equals(key))runOnUiThread(this::refreshHistory);};
@@ -33,7 +35,7 @@ public final class MainActivity extends Activity {
  private String pendingSnapshotName;
  @Override public void onCreate(Bundle saved){
   SahlCore.catchCrashes(this);
-  super.onCreate(saved);if(saved!=null){pendingLocal=saved.getString("local");pendingWriteTree=saved.getString("writePair");}
+  super.onCreate(saved);if(saved!=null){pendingLocal=saved.getString("local");pendingWriteTree=saved.getString("writePair");activeTab=saved.getInt("activeTab",0);}
   if(saved!=null){String cached=saved.getString("snapshot");if(cached!=null){java.io.File file=new java.io.File(cached);try{if(file.getCanonicalFile().getParentFile().equals(getCacheDir().getCanonicalFile()))pendingSnapshot=file;}catch(java.io.IOException ignored){}}pendingSnapshotName=saved.getString("snapshotName");}
   Store.prefs(this).registerOnSharedPreferenceChangeListener(historyListener);
   googleAccounts=GoogleAuth.accounts(this);
@@ -44,7 +46,7 @@ public final class MainActivity extends Activity {
   }
   if(Auth.configured())io.execute(()->{try{IMultipleAccountPublicClientApplication app=Auth.open(getApplicationContext());runOnUiThread(()->{auth=app;loadAccount();});}catch(Exception e){runOnUiThread(()->{updateAccountStatus();});}});
  }
- @Override protected void onResume(){super.onResume();BackupNotifications.refreshStatus(this);googleAccounts=GoogleAuth.accounts(this);updateAccountStatus();updateAccountButtons();if(auth!=null)loadAccount();
+ @Override protected void onResume(){super.onResume();BackupNotifications.refreshStatus(this);googleAccounts=GoogleAuth.accounts(this);refreshAccountsTab();refreshSettingsStatus();if(auth!=null)loadAccount();
   UpdateCheckReceiver.schedule(this);if(!updateCheckedThisRun){updateCheckedThisRun=true;checkForUpdates(null);}}
  private void offerBackgroundSetupForExistingSchedules(){
   if(backgroundAllowed()||Store.prefs(this).getBoolean("backgroundSetupOffered",false))return;
@@ -183,15 +185,14 @@ public final class MainActivity extends Activity {
  private void loadAccount(){
   googleAccounts=GoogleAuth.accounts(this);
   IMultipleAccountPublicClientApplication session=auth;
-  if(session==null){updateAccountStatus();updateAccountButtons();return;}
+  if(session==null){refreshAccountsTab();return;}
   io.execute(()->{
    try{
     List<IAccount> loaded=session.getAccounts();
     runOnUiThread(()->{
      if(isDestroyed()||isFinishing())return;
      accounts=new ArrayList<>(loaded);
-     updateAccountStatus();
-     updateAccountButtons();
+     refreshAccountsTab();
     });
    }catch(Exception e){runOnUiThread(()->{if(!isDestroyed())updateAccountStatus();});}
   });
@@ -240,123 +241,110 @@ public final class MainActivity extends Activity {
   Tr.builder(this).setTitle(title).setItems(labels,(dialog,index)->action.accept(choices.get(index)))
    .setNegativeButton("Cancel",null).show();
  }
- private LinearLayout card(String title){
-  LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);int p=SahlTheme.dp(this,18);card.setPadding(p,p,p,p);card.setBackground(SahlTheme.rounded(this,SahlTheme.PANEL));
-  LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=SahlTheme.dp(this,16);content.addView(card,lp);
-  card.addView(SahlTheme.label(this,title,21,SahlTheme.TEXT));return card;
+ private LinearLayout card(LinearLayout parent,String title){
+  LinearLayout card=SahlTheme.card(this);
+  LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=SahlTheme.dp(this,14);parent.addView(card,lp);
+  card.addView(SahlTheme.label(this,title,20,SahlTheme.TEXT));
+  return card;
  }
+
+ private ScrollView makeTabPage(LinearLayout container){
+  ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);
+  scroll.addView(container);
+  return scroll;
+ }
+
+ private LinearLayout makeTabColumn(){
+  LinearLayout col=new LinearLayout(this);col.setOrientation(LinearLayout.VERTICAL);col.setFocusableInTouchMode(true);
+  int p=SahlTheme.dp(this,16);col.setPadding(p,p,p,p);
+  return col;
+ }
+
  private void draw(){
   ownerLabels.clear();
   for(Runnable remove:unwatch)remove.run();unwatch.clear();
-  ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);
-  scroll.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,new int[]{SahlTheme.TOP,SahlTheme.BOTTOM}));
-  scroll.setOnApplyWindowInsetsListener((v,insets)->{v.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());return insets;});
-  content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);content.setFocusableInTouchMode(true);int p=SahlTheme.dp(this,20);content.setPadding(p,p,p,p);scroll.addView(content);setContentView(scroll);content.requestFocus();
-  content.addView(SahlTheme.label(this,"Sahl Sync",30,SahlTheme.TEXT));
-  content.addView(SahlTheme.label(this,"Keep your phone, cloud drives and PC in sync.",15,SahlTheme.MUTED));
-  LinearLayout connect=card("Cloud accounts");status=SahlTheme.label(this,"",16,SahlTheme.MUTED);connect.addView(status);
-  connectButton=SahlTheme.button(this,"Connect OneDrive",this::connect);connect.addView(connectButton);
-  connectGoogleButton=SahlTheme.button(this,"Connect Google Drive",this::connectGoogle);connect.addView(connectGoogleButton);
-  disconnectButton=SahlTheme.secondary(this,"Disconnect an account",this::disconnect);connect.addView(disconnectButton);updateAccountStatus();updateAccountButtons();
-  connect.addView(SahlTheme.secondary(this,"Background & notifications",this::showBackgroundSetup));
-  Button updates=SahlTheme.secondary(this,"Check for updates",()->{});
-  updates.setOnClickListener(view->checkForUpdates(updates));
-  connect.addView(updates);
-  connect.addView(SahlTheme.secondary(this,"Language / اللغة",this::chooseLanguage));
-  content.addView(SahlTheme.button(this,"Sync with my PC (Wi-Fi)",()->startActivity(new Intent(this,LanActivity.class))));
-  content.addView(SahlTheme.secondary(this,"Messages & apps backup",()->startActivity(new Intent(this,PhoneDataActivity.class))));
-  LinearLayout pairs=card("Folder backups");
-  pairs.addView(SahlTheme.label(this,"Tap a folder to sync it or change its settings. Replaced and deleted files are kept in Version history.",14,SahlTheme.MUTED));
-  pairs.addView(SahlTheme.button(this,"Add folder backup",()->{
-   if(allCloudAccounts().isEmpty()){message("Connect OneDrive or Google Drive first.");return;}
+
+  LinearLayout root=new LinearLayout(this);
+  root.setOrientation(LinearLayout.VERTICAL);
+  root.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,new int[]{SahlTheme.TOP,SahlTheme.BOTTOM}));
+  root.setOnApplyWindowInsetsListener((v,insets)->{
+   v.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());
+   return insets;
+  });
+
+  LinearLayout header=new LinearLayout(this);
+  header.setOrientation(LinearLayout.VERTICAL);
+  int hp=SahlTheme.dp(this,18);
+  header.setPadding(hp,SahlTheme.dp(this,12),hp,SahlTheme.dp(this,6));
+  header.addView(SahlTheme.label(this,"Sahl Sync",26,SahlTheme.TEXT));
+  header.addView(SahlTheme.label(this,"Keep your phone, cloud drives and PC in sync.",14,SahlTheme.MUTED));
+  root.addView(header);
+
+  FrameLayout pager=new FrameLayout(this);
+  LinearLayout.LayoutParams pagerLp=new LinearLayout.LayoutParams(-1,0,1f);
+  root.addView(pager,pagerLp);
+
+  // Tab 0: Syncs
+  LinearLayout syncsCol=makeTabColumn();
+  tabPages[0]=makeTabPage(syncsCol);
+  pager.addView(tabPages[0]);
+
+  LinearLayout pairsCard=card(syncsCol,"Folder backups");
+  pairsCard.addView(SahlTheme.label(this,"Tap a folder to sync it or change its settings. Replaced and deleted files are kept in Version history.",14,SahlTheme.MUTED));
+  pairsCard.addView(SahlTheme.button(this,"Add folder backup",()->{
+   if(allCloudAccounts().isEmpty()){message("Connect OneDrive or Google Drive first.");selectTab(1);return;}
    pickPhoneFolder(42,null);
   }));
-  try{
-   JSONArray all=Store.pairs(this);
-   EditText search=new EditText(this);
-   search.setSingleLine(true);
-   search.setHint("Search folder backups");
-   search.setText(folderQuery);
-   if(all.length()>1)pairs.addView(search);
-   Map<View,String> searchable=new LinkedHashMap<>();
-   if(all.length()==0)pairs.addView(SahlTheme.label(this,"No folders yet. Choose a folder on your phone, then a destination in OneDrive.",16,SahlTheme.MUTED));
-   for(int i=0;i<all.length();i++){
-    JSONObject pair=all.getJSONObject(i);
-    String id=pair.getString("id");
-    String title=pair.getString("name");
-    LinearLayout entry=new LinearLayout(this);
-    entry.setOrientation(LinearLayout.VERTICAL);
-    int inner=SahlTheme.dp(this,12);entry.setPadding(inner,inner,inner,inner);
-    entry.setBackground(SahlTheme.rounded(this,android.graphics.Color.parseColor("#183029")));
-    LinearLayout.LayoutParams gap=new LinearLayout.LayoutParams(-1,-2);gap.topMargin=SahlTheme.dp(this,10);entry.setLayoutParams(gap);
-    pairs.addView(entry);
-    searchable.put(entry,(title+" "+pair.optString("remoteName")).toLowerCase(Locale.ROOT));
-    LinearLayout actions=new LinearLayout(this);
-    actions.setOrientation(LinearLayout.VERTICAL);
-    actions.setVisibility(id.equals(openFolder)?View.VISIBLE:View.GONE);
-    Button heading=SahlTheme.secondary(this,"",()->{});
-    heading.setAllCaps(false);
-    heading.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);
-    heading.setText(title+(id.equals(openFolder)?"  ▴":"  ▾"));
-    heading.setOnClickListener(view->{
-     boolean expanded=actions.getVisibility()!=View.VISIBLE;
-     for(View other:searchable.keySet()){
-      if(other!=entry){
-       LinearLayout row=(LinearLayout)other;
-       row.getChildAt(row.getChildCount()-1).setVisibility(View.GONE);
-       Button otherHeading=(Button)row.getChildAt(0);
-       otherHeading.setText(otherHeading.getText().toString().replaceFirst("  ▴$","  ▾"));
-      }
-     }
-     openFolder=expanded?id:null;
-     actions.setVisibility(expanded?View.VISIBLE:View.GONE);
-     heading.setText(title+(expanded?"  ▴":"  ▾"));
-    });
-    entry.addView(heading);
-    entry.addView(SahlTheme.label(this,directionLabel(pair)+" / "+pair.optString("remoteName")+"\n"+(pair.optBoolean("unmetered")?"Unmetered network":"Any network")+(pair.optBoolean("charging")?" / Charging":"")+(pair.optBoolean("daily")||pair.optInt("scheduleMode")!=0?" / Scheduled":" / Manual"),14,SahlTheme.MUTED));
-    TextView owner=SahlTheme.label(this,"",14,SahlTheme.MUTED);
-    entry.addView(owner);
-    ownerLabels.put(owner,pair);
-    updateOwnerLabel(owner,pair);
-    TextView manual=SahlTheme.label(this,"",14,SahlTheme.MUTED),scheduled=SahlTheme.label(this,"",14,SahlTheme.MUTED);
-    entry.addView(manual);entry.addView(scheduled);entry.addView(actions);
-    Button backup=SahlTheme.button(this,"Sync now",()->BackupWorker.enqueue(this,pair,false));actions.addView(backup);
-    Button cancel=SahlTheme.secondary(this,"Stop",()->cancelBackup(pair));actions.addView(cancel);
-    watchWork("manual-"+pair.optString("id"),manual,false,false);
-    String generation=pair.optString("scheduleGeneration");
-    watchWork(generation.isEmpty()?"scheduled-"+id:generation,scheduled,true,!generation.isEmpty());
-    actions.addView(SahlTheme.secondary(this,"Settings",()->editPair(pair)));
-    actions.addView(SahlTheme.secondary(this,"Activity",()->showFolderHistory(pair)));
-    actions.addView(SahlTheme.secondary(this,"Version history",()->showVersionFiles(pair)));
-    Button remove=SahlTheme.secondary(this,"Remove this folder",()->removePair(pair));
-    remove.setTextColor(android.graphics.Color.parseColor("#E8857A"));actions.addView(remove);
+  EditText search=new EditText(this);
+  search.setSingleLine(true);
+  search.setHint(Tr.t(this,"Search folder backups"));
+  search.setText(folderQuery);
+  search.setTextColor(SahlTheme.TEXT);
+  search.setHintTextColor(SahlTheme.MUTED);
+  pairsCard.addView(search);
+  pairsList=new LinearLayout(this);
+  pairsList.setOrientation(LinearLayout.VERTICAL);
+  pairsCard.addView(pairsList);
+  search.addTextChangedListener(new android.text.TextWatcher(){
+   public void beforeTextChanged(CharSequence text,int start,int count,int after){}
+   public void onTextChanged(CharSequence text,int start,int before,int count){
+    folderQuery=text.toString();
+    filterPairs();
+   }
+   public void afterTextChanged(android.text.Editable text){}
+  });
+  syncsCol.addView(SahlTheme.secondary(this,"Sync with my PC (Wi-Fi)",()->startActivity(new Intent(this,LanActivity.class))));
+  refreshPairs(search);
 
-   }
-   if(all.length()>1){
-    TextView empty=SahlTheme.label(this,"No matching folder backups.",15,SahlTheme.MUTED);
-    pairs.addView(empty);
-    Runnable filter=()->{
-     String query=folderQuery.trim().toLowerCase(Locale.ROOT);
-     boolean any=false;
-     for(Map.Entry<View,String> item:searchable.entrySet()){
-      boolean match=item.getValue().contains(query);
-      item.getKey().setVisibility(match?View.VISIBLE:View.GONE);
-      any|=match;
-     }
-     empty.setVisibility(any?View.GONE:View.VISIBLE);
-    };
-    search.addTextChangedListener(new android.text.TextWatcher(){
-     public void beforeTextChanged(CharSequence text,int start,int count,int after){}
-     public void onTextChanged(CharSequence text,int start,int before,int count){
-      folderQuery=text.toString();
-      filter.run();
-     }
-     public void afterTextChanged(android.text.Editable text){}
-    });
-    filter.run();
-   }
-  }catch(Exception e){message("Could not load folder backups.");}
-  LinearLayout log=card("History");history=SahlTheme.label(this,"",15,SahlTheme.MUTED);refreshHistory();
+  // Tab 1: Accounts & Devices
+  LinearLayout accountsCol=makeTabColumn();
+  tabPages[1]=makeTabPage(accountsCol);
+  pager.addView(tabPages[1]);
+
+  LinearLayout connect=card(accountsCol,"Cloud accounts");
+  status=SahlTheme.label(this,"",15,SahlTheme.MUTED);connect.addView(status);
+  accountsList=new LinearLayout(this);accountsList.setOrientation(LinearLayout.VERTICAL);
+  connect.addView(accountsList);
+  connectButton=SahlTheme.button(this,"Connect OneDrive",this::connect);connect.addView(connectButton);
+  connectGoogleButton=SahlTheme.button(this,"Connect Google Drive",this::connectGoogle);connect.addView(connectGoogleButton);
+  disconnectButton=SahlTheme.secondary(this,"Disconnect an account",this::disconnect);connect.addView(disconnectButton);
+
+  LinearLayout lanCard=card(accountsCol,"Paired PCs (Wi-Fi)");
+  lanSummary=SahlTheme.label(this,"",14,SahlTheme.MUTED);lanCard.addView(lanSummary);
+  lanCard.addView(SahlTheme.secondary(this,"Open PC Wi-Fi sync",()->startActivity(new Intent(this,LanActivity.class))));
+  refreshAccountsTab();
+
+  // Tab 2: History & Backups
+  LinearLayout historyCol=makeTabColumn();
+  tabPages[2]=makeTabPage(historyCol);
+  pager.addView(tabPages[2]);
+
+  LinearLayout phoneDataCard=card(historyCol,"Messages & apps");
+  phoneDataCard.addView(SahlTheme.label(this,"Back up or restore SMS, call logs, and installed app lists.",14,SahlTheme.MUTED));
+  phoneDataCard.addView(SahlTheme.secondary(this,"Open messages & apps backup",()->startActivity(new Intent(this,PhoneDataActivity.class))));
+
+  LinearLayout log=card(historyCol,"History");
+  history=SahlTheme.label(this,"",14,SahlTheme.MUTED);refreshHistory();
   log.addView(SahlTheme.secondary(this,"Refresh history",this::refreshHistory));
   log.addView(SahlTheme.secondary(this,"View full history",()->{
    ScrollView list=new ScrollView(this);
@@ -364,14 +352,202 @@ public final class MainActivity extends Activity {
    Tr.builder(this).setTitle("Backup history").setView(list).setPositiveButton("Close",null).show();
   }));
   log.addView(history);
-  Tr.tree(this,content);
+
+  // Tab 3: Settings
+  LinearLayout settingsCol=makeTabColumn();
+  tabPages[3]=makeTabPage(settingsCol);
+  pager.addView(tabPages[3]);
+
+  LinearLayout prefsCard=card(settingsCol,"Settings");
+  settingsStatus=SahlTheme.label(this,"",14,SahlTheme.MUTED);prefsCard.addView(settingsStatus);
+  prefsCard.addView(SahlTheme.secondary(this,"Background & notifications",this::showBackgroundSetup));
+  prefsCard.addView(SahlTheme.secondary(this,"Language / اللغة",this::chooseLanguage));
+  LinearLayout updateCard=card(settingsCol,"Version & updates");
+  updateCard.addView(SahlTheme.label(this,"Installed version: v"+BuildConfig.VERSION_NAME,14,SahlTheme.MUTED));
+  Button updates=SahlTheme.secondary(this,"Check for updates",()->{});
+  updates.setOnClickListener(view->checkForUpdates(updates));
+  updateCard.addView(updates);
+  refreshSettingsStatus();
+
+  // Bottom tab bar
+  tabBar=new LinearLayout(this);
+  tabBar.setOrientation(LinearLayout.HORIZONTAL);
+  tabBar.setBackgroundColor(SahlTheme.PANEL);
+  int tp=SahlTheme.dp(this,6);
+  tabBar.setPadding(tp,tp,tp,tp);
+  tabBar.setElevation(SahlTheme.dp(this,6));
+  root.addView(tabBar);
+
+  content=root;
+  setContentView(root);
+  selectTab(activeTab);
+  Tr.tree(this,root);
  }
- private void watchWork(String name,TextView label,boolean periodic,boolean timed){
+
+ private void selectTab(int index){
+  activeTab=Math.max(0,Math.min(3,index));
+  for(int i=0;i<tabPages.length;i++){
+   if(tabPages[i]!=null)tabPages[i].setVisibility(i==activeTab?View.VISIBLE:View.GONE);
+  }
+  if(tabBar!=null){
+   tabBar.removeAllViews();
+   String[] titles={"Syncs","Accounts","History","Settings"};
+   for(int i=0;i<titles.length;i++){
+    final int target=i;
+    tabBar.addView(SahlTheme.tabButton(this,titles[i],i==activeTab,()->selectTab(target)));
+   }
+  }
+ }
+
+ private final Map<View,String> searchablePairs=new LinkedHashMap<>();
+ private TextView emptySearchLabel;
+
+ private void refreshPairs(EditText searchView){
+  if(pairsList==null)return;
+  ownerLabels.clear();
+  searchablePairs.clear();
+  for(Runnable remove:unwatch)remove.run();unwatch.clear();
+  pairsList.removeAllViews();
+  try{
+   JSONArray all=Store.pairs(this);
+   if(searchView!=null)searchView.setVisibility(all.length()>1?View.VISIBLE:View.GONE);
+   if(all.length()==0){
+    pairsList.addView(SahlTheme.label(this,"No folders yet. Choose a folder on your phone, then a destination in OneDrive.",15,SahlTheme.MUTED));
+    return;
+   }
+   for(int i=0;i<all.length();i++){
+    JSONObject pair=all.getJSONObject(i);
+    String id=pair.getString("id");
+    String title=pair.getString("name");
+    SyncProvider provider=SyncProvider.from(pair.optString("provider"));
+
+    LinearLayout entry=new LinearLayout(this);
+    entry.setOrientation(LinearLayout.VERTICAL);
+    int inner=SahlTheme.dp(this,14);entry.setPadding(inner,inner,inner,inner);
+    entry.setBackground(SahlTheme.rounded(this,android.graphics.Color.parseColor("#183029")));
+    LinearLayout.LayoutParams gap=new LinearLayout.LayoutParams(-1,-2);gap.topMargin=SahlTheme.dp(this,10);entry.setLayoutParams(gap);
+    pairsList.addView(entry);
+    searchablePairs.put(entry,(title+" "+pair.optString("remoteName")+" "+provider.displayName).toLowerCase(Locale.ROOT));
+
+    LinearLayout topRow=new LinearLayout(this);
+    topRow.setOrientation(LinearLayout.HORIZONTAL);
+    topRow.setGravity(Gravity.CENTER_VERTICAL);
+    TextView titleView=SahlTheme.label(this,title,17,SahlTheme.TEXT);
+    titleView.setLayoutParams(new LinearLayout.LayoutParams(0,-2,1f));
+    topRow.addView(titleView);
+    int badgeBg=provider==SyncProvider.GOOGLE_DRIVE?android.graphics.Color.parseColor("#2A3D1F"):android.graphics.Color.parseColor("#1E3A4A");
+    topRow.addView(SahlTheme.badge(this,provider.displayName,badgeBg,SahlTheme.TEXT));
+    entry.addView(topRow);
+
+    entry.addView(SahlTheme.label(this,directionLabel(pair)+" / "+pair.optString("remoteName")+"\n"+(pair.optBoolean("unmetered")?"Unmetered network":"Any network")+(pair.optBoolean("charging")?" / Charging":"")+(pair.optBoolean("daily")||pair.optInt("scheduleMode")!=0?" / Scheduled":" / Manual"),13,SahlTheme.MUTED));
+    TextView owner=SahlTheme.label(this,"",13,SahlTheme.MUTED);
+    entry.addView(owner);
+    ownerLabels.put(owner,pair);
+    updateOwnerLabel(owner,pair);
+
+    TextView manual=SahlTheme.label(this,"",13,SahlTheme.MUTED),scheduled=SahlTheme.label(this,"",13,SahlTheme.MUTED);
+    ProgressBar progressBar=SahlTheme.progressBar(this);
+    entry.addView(manual);entry.addView(progressBar);entry.addView(scheduled);
+
+    LinearLayout quickRow=new LinearLayout(this);
+    quickRow.setOrientation(LinearLayout.HORIZONTAL);
+    Button syncNow=SahlTheme.compactButton(this,"Sync now",()->BackupWorker.enqueue(this,pair,false));
+    LinearLayout.LayoutParams syncLp=new LinearLayout.LayoutParams(0,-2,1f);
+    syncLp.rightMargin=SahlTheme.dp(this,6);
+    syncNow.setLayoutParams(syncLp);
+    Button stopBtn=SahlTheme.compactSecondary(this,"Stop",()->cancelBackup(pair));
+    LinearLayout.LayoutParams stopLp=new LinearLayout.LayoutParams(0,-2,1f);
+    stopBtn.setLayoutParams(stopLp);
+    quickRow.addView(syncNow);quickRow.addView(stopBtn);
+    entry.addView(quickRow);
+
+    LinearLayout actions=new LinearLayout(this);
+    actions.setOrientation(LinearLayout.VERTICAL);
+    actions.setVisibility(id.equals(openFolder)?View.VISIBLE:View.GONE);
+    Button toggle=SahlTheme.compactSecondary(this,"Settings & history"+(id.equals(openFolder)?"  ▴":"  ▾"),()->{});
+    toggle.setOnClickListener(view->{
+     boolean expanded=actions.getVisibility()!=View.VISIBLE;
+     openFolder=expanded?id:null;
+     actions.setVisibility(expanded?View.VISIBLE:View.GONE);
+     toggle.setText(Tr.t(this,"Settings & history")+(expanded?"  ▴":"  ▾"));
+    });
+    entry.addView(toggle);
+    entry.addView(actions);
+
+    watchWork("manual-"+pair.optString("id"),manual,progressBar,false,false);
+    String generation=pair.optString("scheduleGeneration");
+    watchWork(generation.isEmpty()?"scheduled-"+id:generation,scheduled,null,true,!generation.isEmpty());
+    actions.addView(SahlTheme.compactSecondary(this,"Settings",()->editPair(pair)));
+    actions.addView(SahlTheme.compactSecondary(this,"Activity",()->showFolderHistory(pair)));
+    actions.addView(SahlTheme.compactSecondary(this,"Version history",()->showVersionFiles(pair)));
+    Button remove=SahlTheme.compactSecondary(this,"Remove this folder",()->removePair(pair));
+    remove.setTextColor(android.graphics.Color.parseColor("#E8857A"));actions.addView(remove);
+   }
+   emptySearchLabel=SahlTheme.label(this,"No matching folder backups.",15,SahlTheme.MUTED);
+   pairsList.addView(emptySearchLabel);
+   filterPairs();
+  }catch(Exception e){message("Could not load folder backups.");}
+ }
+
+ private void filterPairs(){
+  if(searchablePairs.isEmpty())return;
+  String query=folderQuery.trim().toLowerCase(Locale.ROOT);
+  boolean any=false;
+  for(Map.Entry<View,String> item:searchablePairs.entrySet()){
+   boolean match=item.getValue().contains(query);
+   item.getKey().setVisibility(match?View.VISIBLE:View.GONE);
+   any|=match;
+  }
+  if(emptySearchLabel!=null)emptySearchLabel.setVisibility(any?View.GONE:View.VISIBLE);
+ }
+
+ private void refreshAccountsTab(){
+  updateAccountStatus();
+  updateAccountButtons();
+  if(accountsList!=null){
+   accountsList.removeAllViews();
+   for(CloudAccount acc:allCloudAccounts()){
+    LinearLayout row=new LinearLayout(this);
+    row.setOrientation(LinearLayout.HORIZONTAL);
+    row.setGravity(Gravity.CENTER_VERTICAL);
+    int p=SahlTheme.dp(this,10);row.setPadding(p,p,p,p);
+    row.setBackground(SahlTheme.rounded(this,android.graphics.Color.parseColor("#183029")));
+    LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=SahlTheme.dp(this,8);
+    row.setLayoutParams(lp);
+    TextView lbl=SahlTheme.label(this,"["+acc.provider.displayName+"] "+acc.label,14,SahlTheme.TEXT);
+    lbl.setLayoutParams(new LinearLayout.LayoutParams(0,-2,1f));
+    row.addView(lbl);
+    accountsList.addView(row);
+   }
+  }
+  if(lanSummary!=null){
+   try{
+    List<LanPairs.Pair> pcs=new LanPairs(getSharedPreferences("lan-sync",MODE_PRIVATE)).list();
+    int ready=0;
+    for(LanPairs.Pair p:pcs)if(p.ready())ready++;
+    lanSummary.setText(ready==0?Tr.t(this,"No paired PCs yet. Scan a QR code from SahlSyncPC to sync over Wi-Fi."):ready+" paired PC folder"+(ready==1?"":"s"));
+   }catch(Exception ignored){lanSummary.setText("");}
+  }
+ }
+
+ private void refreshSettingsStatus(){
+  if(settingsStatus==null)return;
+  String lang=Tr.language(this);
+  String langLabel="ar".equals(lang)?"العربية":"en".equals(lang)?"English":"Auto";
+  String bg=backgroundAllowed()?"Allowed":"Restricted";
+  settingsStatus.setText(Tr.t(this,"Language")+": "+langLabel+"  ·  "+Tr.t(this,"Allow background backups")+": "+bg);
+ }
+
+ private void watchWork(String name,TextView label,ProgressBar bar,boolean periodic,boolean timed){
   androidx.lifecycle.LiveData<List<WorkInfo>> live=timed?WorkManager.getInstance(this).getWorkInfosByTagLiveData(name)
    :WorkManager.getInstance(this).getWorkInfosForUniqueWorkLiveData(name);
   androidx.lifecycle.Observer<List<WorkInfo>> observer=rows->{
    if(isDestroyed())return;
-   if(rows==null||rows.isEmpty()){label.setText(periodic?"Schedule: off":"Manual: ready");return;}
+   if(rows==null||rows.isEmpty()){
+    if(bar!=null)bar.setVisibility(View.GONE);
+    label.setText(periodic?"Schedule: off":"Manual: ready");
+    return;
+   }
    WorkInfo selected=rows.get(0);
    for(WorkInfo row:rows)if(!row.getState().isFinished()){selected=row;if(row.getState()==WorkInfo.State.RUNNING)break;}
    if(timed&&selected.getState()!=WorkInfo.State.RUNNING){
@@ -379,6 +555,7 @@ public final class MainActivity extends Activity {
      &&(selected.getState()!=WorkInfo.State.ENQUEUED||row.getNextScheduleTimeMillis()<selected.getNextScheduleTimeMillis()))selected=row;
    }
    String prefix=timed?"Schedule: ":periodic?"Daily: ":"Manual: ";
+   if(bar!=null&&selected.getState()!=WorkInfo.State.RUNNING)bar.setVisibility(View.GONE);
    switch(selected.getState()){
     case RUNNING:
      Data progress=selected.getProgress();
@@ -387,9 +564,13 @@ public final class MainActivity extends Activity {
      String transfer="";
      if(total>0){
       long accepted=progress.getLong("acceptedBytes",0);
+      int pct=(int)(accepted*100/total);
+      if(bar!=null){bar.setVisibility(View.VISIBLE);bar.setIndeterminate(false);bar.setProgress(pct);}
       String verb=progress.getBoolean("resumed",false)?"Resumed upload":"Uploading";
       transfer=String.format(Locale.getDefault(),"\n%s: %.1f / %.1f MiB (%d%%)",
-       verb,accepted/1048576.0,total/1048576.0,accepted*100/total);
+       verb,accepted/1048576.0,total/1048576.0,pct);
+     }else if(bar!=null){
+      bar.setVisibility(View.VISIBLE);bar.setIndeterminate(true);
      }
      int uploaded=progress.getInt("uploaded",0),downloaded=progress.getInt("downloaded",0);
      String totals=progress.hasKeyWithValueOfType("filesChecked",Integer.class)
@@ -817,6 +998,6 @@ public final class MainActivity extends Activity {
   }).setNegativeButton("Cancel",null).show();
  }
  private void message(String text){if(!isFinishing()&&!isDestroyed())Tr.builder(this).setMessage(text).setPositiveButton("OK",null).show();}
- @Override protected void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);out.putString("local",pendingLocal);out.putString("writePair",pendingWriteTree);if(pendingSnapshot!=null)out.putString("snapshot",pendingSnapshot.getAbsolutePath());out.putString("snapshotName",pendingSnapshotName);}
+ @Override protected void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);out.putInt("activeTab",activeTab);out.putString("local",pendingLocal);out.putString("writePair",pendingWriteTree);if(pendingSnapshot!=null)out.putString("snapshot",pendingSnapshot.getAbsolutePath());out.putString("snapshotName",pendingSnapshotName);}
  @Override protected void onDestroy(){for(Runnable remove:unwatch)remove.run();unwatch.clear();Store.prefs(this).unregisterOnSharedPreferenceChangeListener(historyListener);io.shutdown();super.onDestroy();}
 }
