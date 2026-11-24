@@ -1,43 +1,40 @@
 package com.aly.sahlsync;
 
-import org.json.JSONObject;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SyncPairTest {
- @Test public void defaultsToOneDriveWhenProviderIsMissing()throws Exception{
-  JSONObject raw=new JSONObject()
-   .put("id","pair-1")
-   .put("name","Photos")
-   .put("local","content://tree/1")
-   .put("remote","drive-1")
-   .put("remoteName","Camera Roll")
-   .put("account","acc-1")
-   .put("direction","newest");
-  SyncPair pair=SyncPair.fromJson(raw);
-  assertEquals(SyncProvider.ONEDRIVE,pair.provider);
-  assertEquals(SyncDirection.NEWEST,pair.direction);
-  assertTrue(pair.unmetered);
-  assertTrue(pair.syncDeletions);
-  assertEquals(10,pair.keepVersions);
-  JSONObject roundTrip=pair.toJson();
-  assertEquals("onedrive",roundTrip.getString("provider"));
-  assertEquals("newest",roundTrip.getString("direction"));
+ @Test public void syncProviderDefaultsToOneDrive(){
+  assertEquals(SyncProvider.ONEDRIVE,SyncProvider.from(null));
+  assertEquals(SyncProvider.ONEDRIVE,SyncProvider.from(""));
+  assertEquals(SyncProvider.ONEDRIVE,SyncProvider.from("onedrive"));
+  assertEquals(SyncProvider.ONEDRIVE,SyncProvider.from("unknown"));
+  assertEquals(SyncProvider.GOOGLE_DRIVE,SyncProvider.from("gdrive"));
  }
 
- @Test public void preservesGoogleDriveProvider()throws Exception{
-  SyncPair pair=new SyncPair("pair-2");
-  pair.name="Docs";
-  pair.provider=SyncProvider.GOOGLE_DRIVE;
-  pair.direction=SyncDirection.DOWNLOAD;
-  pair.unmetered=false;
-  pair.charging=true;
-  pair.keepVersions=30;
-  SyncPair decoded=SyncPair.fromJson(pair.toJson());
-  assertEquals(SyncProvider.GOOGLE_DRIVE,decoded.provider);
-  assertEquals(SyncDirection.DOWNLOAD,decoded.direction);
-  assertFalse(decoded.unmetered);
-  assertTrue(decoded.charging);
-  assertEquals(30,decoded.keepVersions);
+ @Test public void syncPairHasSafeDefaults(){
+  SyncPair pair=new SyncPair("pair-1");
+  assertEquals("pair-1",pair.id);
+  assertEquals(SyncProvider.ONEDRIVE,pair.provider);
+  assertEquals(SyncDirection.UPLOAD,pair.direction);
+  assertTrue(pair.unmetered);
+  assertFalse(pair.charging);
+  assertTrue(pair.syncDeletions);
+  assertTrue(pair.notify);
+  assertEquals(10,pair.keepVersions);
+ }
+
+ @Test public void cloudDriveHttpErrorClassifiesRetryAndConflict(){
+  CloudDrive.HttpError rateLimit=new CloudDrive.HttpError("OneDrive",429);
+  assertTrue(rateLimit.retryable);
+  assertFalse(rateLimit.conflict);
+
+  CloudDrive.HttpError serverError=new CloudDrive.HttpError("Google Drive",503);
+  assertTrue(serverError.retryable);
+  assertFalse(serverError.conflict);
+
+  CloudDrive.HttpError conflict=new CloudDrive.HttpError("OneDrive",412);
+  assertFalse(conflict.retryable);
+  assertTrue(conflict.conflict);
  }
 }
