@@ -57,7 +57,7 @@ final class Store {
   throw new java.io.IOException("Folder pair not found");
  }
  private static final class ReceiptsDb extends android.database.sqlite.SQLiteOpenHelper {
-  ReceiptsDb(Context c){super(c.getApplicationContext(),"sahl_sync.db",null,2);}
+  ReceiptsDb(Context c){super(c.getApplicationContext(),"sahl_sync.db",null,3);}
   @Override public void onConfigure(android.database.sqlite.SQLiteDatabase db){db.enableWriteAheadLogging();}
   @Override public void onCreate(android.database.sqlite.SQLiteDatabase db){
    db.execSQL("CREATE TABLE IF NOT EXISTS receipts("
@@ -66,9 +66,11 @@ final class Store {
     +"size INTEGER NOT NULL,phone_modified INTEGER NOT NULL,PRIMARY KEY(pair,path))");
    db.execSQL("CREATE INDEX IF NOT EXISTS idx_receipts_pair ON receipts(pair)");
    createPairsAndHistory(db);
+   createLanFiles(db);
   }
   @Override public void onUpgrade(android.database.sqlite.SQLiteDatabase db,int oldVersion,int newVersion){
    if(oldVersion<2)createPairsAndHistory(db);
+   if(oldVersion<3)createLanFiles(db);
   }
   private static void createPairsAndHistory(android.database.sqlite.SQLiteDatabase db){
    db.execSQL("CREATE TABLE IF NOT EXISTS pairs("
@@ -77,6 +79,11 @@ final class Store {
     +"id INTEGER PRIMARY KEY AUTOINCREMENT,time INTEGER NOT NULL,pair_id TEXT,message TEXT NOT NULL)");
    db.execSQL("CREATE INDEX IF NOT EXISTS idx_history_pair_time ON history(pair_id,time DESC)");
    db.execSQL("CREATE INDEX IF NOT EXISTS idx_history_time ON history(time DESC)");
+  }
+  private static void createLanFiles(android.database.sqlite.SQLiteDatabase db){
+   db.execSQL("CREATE TABLE IF NOT EXISTS lan_files("
+    +"archive_key TEXT NOT NULL,path TEXT NOT NULL,last_hash TEXT NOT NULL,"
+    +"sig TEXT NOT NULL,hash TEXT NOT NULL,PRIMARY KEY(archive_key,path))");
   }
  }
  private static ReceiptsDb dbHelper;
@@ -236,5 +243,63 @@ final class Store {
    database.execSQL("DELETE FROM history WHERE id NOT IN (SELECT id FROM history ORDER BY id DESC LIMIT 500)");
    prefs(c).edit().putLong("historyVersion",now).apply();
   }catch(Exception ignored){/* History must never contain credentials or response bodies. */}
+ }
+ static final class LanFileState {
+  final String lastHash,sig,hash;
+  LanFileState(String lastHash,String sig,String hash){
+   this.lastHash=lastHash==null?"":lastHash;
+   this.sig=sig==null?"":sig;
+   this.hash=hash==null?"":hash;
+  }
+ }
+ static synchronized Map<String,LanFileState> lanState(Context c,String archiveKey){
+  Map<String,LanFileState> result=new HashMap<>();
+  android.database.sqlite.SQLiteDatabase database=db(c);
+  try(android.database.Cursor cursor=database.rawQuery(
+   "SELECT path,last_hash,sig,hash FROM lan_files WHERE archive_key=?",new String[]{archiveKey})){
+   while(cursor.moveToNext()){
+    result.put(cursor.getString(0),new LanFileState(cursor.getString(1),cursor.getString(2),cursor.getString(3)));
+   }
+  }
+  if(result.isEmpty()){
+   SharedPreferences legacy=c.getSharedPreferences("lan-sync-state",Context.MODE_PRIVATE);
+   String rawState=legacy.getString("state-"+archiveKey,null);
+   String rawHashes=legacy.getString("hashes-"+archiveKey,null);
+   if(rawState!=null||rawHashes!=null){
+    try{
+     JSONObject stateJson=rawState==null?new JSONObject():new JSONObject(rawState);
+     JSONObject hashJson=rawHashes==null?new JSONObject():new JSONObject(rawHashes);
+     Set<String> allPaths=new HashSet<>();
+     for(Iterator<String> it=stateJson.keys();it.hasNext();)allPaths.add(it.next());
+     for(Iterator<String> it=hashJson.keys();it.hasNext();)allPaths.add(it.next());
+     for(String p:allPaths){
+      JSONObject h=hashJson.optJSONObject(p);
+      result.put(p,new LanFileState(stateJson.optString(p,""),h==null?"":h.optString("s",""),h==null?"":h.optString("h","")));
+     }
+     saveLanState(c,archiveKey,result);
+     legacy.edit().remove("state-"+archiveKey).remove("hashes-"+archiveKey).apply();
+    }catch(Exception ignored){}
+   }
+  }
+  return result;
+ }
+ static synchronized void saveLanState(Context c,String archiveKey,Map<String,LanFileState> entries){
+  android.database.sqlite.SQLiteDatabase database=db(c);
+  database.beginTransaction();
+  try{
+   database.delete("lan_files","archive_key=?",new String[]{archiveKey});
+   for(Map.Entry<String,LanFileState> e:entries.entrySet()){
+    LanFileState v=e.getValue();
+    if(v.lastHash.isEmpty()&&v.sig.isEmpty()&&v.hash.isEmpty())continue;
+    android.content.ContentValues row=new android.content.ContentValues();
+    row.put("archive_key",archiveKey);
+    row.put("path",e.getKey());
+    row.put("last_hash",v.lastHash);
+    row.put("sig",v.sig);
+    row.put("hash",v.hash);
+    database.insertWithOnConflict("lan_files",null,row,android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE);
+   }
+   database.setTransactionSuccessful();
+  }finally{database.endTransaction();}
  }
 }
