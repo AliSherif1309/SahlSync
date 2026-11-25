@@ -46,7 +46,7 @@ final class BackupNotifications {
   NotificationManager manager=context.getSystemService(NotificationManager.class);
   manager.createNotificationChannel(new NotificationChannel(RUNNING,"Backup in progress",NotificationManager.IMPORTANCE_LOW));
   Intent open=new Intent(context,LanActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
-  Notification notification=new Notification.Builder(context,RUNNING).setSmallIcon(R.drawable.ic_backup_notification)
+  Notification notification=SahlNotif.apply(context,new Notification.Builder(context,RUNNING))
    .setContentIntent(PendingIntent.getActivity(context,1,open,PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT))
    .setContentTitle(title).setContentText(text).setStyle(new Notification.BigTextStyle().bigText(text))
    .setProgress(Math.max(todo,0),Math.max(done,0),todo<=0).setOngoing(true).setOnlyAlertOnce(true).setShowWhen(false)
@@ -69,7 +69,7 @@ final class BackupNotifications {
  private static Notification.Builder builder(Context context,String channel){
   Intent open=new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);
   PendingIntent action=PendingIntent.getActivity(context,0,open,PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
-  return new Notification.Builder(context,channel).setSmallIcon(R.drawable.ic_backup_notification).setContentIntent(action);
+  return SahlNotif.apply(context,new Notification.Builder(context,channel)).setContentIntent(action);
  }
 
  private static void post(Context context,String tag,int id,Notification notification){

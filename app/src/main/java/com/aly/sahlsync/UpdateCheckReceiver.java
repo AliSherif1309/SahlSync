@@ -35,7 +35,7 @@ public final class UpdateCheckReceiver extends BroadcastReceiver {
   if(launch==null)return;
   PendingIntent open=PendingIntent.getActivity(context,5,launch,PendingIntent.FLAG_IMMUTABLE);
   try{
-   manager.notify(500,new Notification.Builder(context,"updates").setSmallIcon(android.R.drawable.stat_sys_download_done)
+   manager.notify(500,SahlNotif.apply(context,new Notification.Builder(context,"updates"))
     .setContentTitle("New version available: v"+newest.version)
     .setContentText(newest.notes.isEmpty()?"Update now":newest.notes)
     .setContentIntent(open).setAutoCancel(true).build());
